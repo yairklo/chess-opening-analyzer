@@ -15,11 +15,18 @@ from .analyze import db, fen_key
 ERR_COLS = ["fen_before", "played", "played_san", "best", "eval_before", "eval_after", "win_before", "win_after", "drop"]
 
 
-def load_results():
-    """(games, errors): one row per analysed game, one row per error of the user in the analysed plies."""
+def load_results(user: str = C.USER):
+    """(games, errors) of one player: one row per analysed game, one row per error in the analysed plies.
+    `errors` is empty until the Stockfish analysis has run for that player."""
     con = db()
-    games = pd.read_sql("select * from game_results", con)
-    errors = pd.read_sql("select * from errors", con).merge(games[["id", "color"]], on="id")
+    user = user.lower()
+    games = pd.read_sql("select * from game_results where user=?", con, params=(user,))
+    try:
+        errors = pd.read_sql("select * from errors where user=?", con, params=(user,))
+    except Exception:
+        errors = pd.DataFrame(columns=["id", "ply", "fen_before", "played", "played_san", "best", "eval_before",
+                                       "eval_after", "win_before", "win_after", "drop"])
+    errors = errors.drop(columns="user", errors="ignore").merge(games[["id", "color"]], on="id")
     errors["key"] = errors.fen_before.map(lambda f: " ".join(f.split()[:4]))
     return games, errors
 

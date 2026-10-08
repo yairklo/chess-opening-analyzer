@@ -1,14 +1,19 @@
 """Stockfish analysis of the first N plies of every game + error detection.
 
 Evaluations are cached in SQLite by (FEN, engine tag) in table `evals_v2`; the tag holds the engine
-version and search settings, so changing either never mixes old and new evals. Every error of the user
+version and search settings, so changing either never mixes old and new evals. Every error of the player
 in the analysed plies goes to `errors` (one row per error); per-game metadata goes to `game_results`.
+All per-game tables carry a `user` column, so several players can be analysed side by side.
+
+    python -m chessapp.analyze [user] [--quick] [--limit N]
+
+--quick only builds `game_results` (results + opening lines, no engine): enough for the opening tree.
 """
+import argparse
 import json
 import math
 import multiprocessing as mp
 import sqlite3
-import sys
 import time
 
 import chess
@@ -32,7 +37,24 @@ def win_pct(cp: float) -> float:
 def db():
     con = sqlite3.connect(C.DB_FILE, timeout=60)
     con.executescript(SCHEMA)
+    # migrate single-player tables (from before multi-player support): their rows belong to the default user
+    for t in ("game_results", "errors", "skipped"):
+        cols = [r[1] for r in con.execute(f"PRAGMA table_info({t})")]
+        if cols and "user" not in cols:
+            con.execute(f"ALTER TABLE {t} ADD COLUMN user TEXT NOT NULL DEFAULT '{C.USER.lower()}'")
+            con.commit()
     return con
+
+
+def users():
+    """Players that have results in the database, default player first."""
+    con = db()
+    try:
+        found = [r[0] for r in con.execute("SELECT DISTINCT user FROM game_results")]
+    except sqlite3.OperationalError:
+        found = []
+    me = C.USER.lower()
+    return ([me] if me in found else []) + sorted(u for u in found if u != me)
 
 
 def fen_key(board: chess.Board) -> str:
@@ -42,16 +64,16 @@ def fen_key(board: chess.Board) -> str:
 
 # ---------------- game parsing ----------------
 
-def load_games():
-    with open(C.GAMES_FILE, encoding="utf-8") as f:
+def load_games(user=C.USER):
+    with open(C.games_file(user), encoding="utf-8") as f:
         return [json.loads(l) for l in f if l.strip()]
 
 
-def classify(g):
+def classify(g, user=C.USER):
     """Return (color, skip_reason). color is 'white'/'black'."""
     if g.get("variant") != "standard" or "initialFen" in g:
         return None, "non-standard start position/variant"
-    me = C.USER.lower()
+    me = user.lower()
     w = (g["players"]["white"].get("user") or {}).get("id")
     b = (g["players"]["black"].get("user") or {}).get("id")
     color = "white" if w == me else "black" if b == me else None
@@ -94,10 +116,11 @@ def _eval(board, con, new):
     return cp, best
 
 
-def analyze_game(g):
-    """All errors of the user in the first ANALYZE_PLIES plies (analysis does not stop at the first one,
+def analyze_game(job):
+    """All errors of the player in the first ANALYZE_PLIES plies (analysis does not stop at the first one,
     so an intentional gambit move does not hide the real mistakes that follow it)."""
-    color, _ = classify(g)
+    g, user = job
+    color, _ = classify(g, user)
     me_white = color == "white"
     con = sqlite3.connect(C.DB_FILE, timeout=60)
     new, errors = {}, []
@@ -129,54 +152,85 @@ def analyze_game(g):
     return res, errors, new, _tag
 
 
-def run(limit=None):
-    games = load_games()
+def _split(games, user):
     todo, skipped = [], []
     for g in games:
-        color, why = classify(g)
+        color, why = classify(g, user)
         (todo if color else skipped).append(g if color else (g["id"], why))
+    return todo, skipped
+
+
+def build_results(user=C.USER):
+    """Per-game rows (result, opening line, rating...) from the downloaded games; no engine needed."""
+    user = user.lower()
+    games = load_games(user)
+    todo, skipped = _split(games, user)
+    rows = []
+    for g in todo:
+        col = "white" if (g["players"]["white"].get("user") or {}).get("id") == user else "black"
+        me, opp = g["players"][col], g["players"]["black" if col == "white" else "white"]
+        w = g.get("winner")
+        score = 0.5 if w is None else 1.0 if w == col else 0.0
+        rows.append({"id": g["id"], "color": col, "plies_analyzed": min(len(g["moves"].split()), C.ANALYZE_PLIES),
+                     "speed": "bullet" if g["speed"] == "ultraBullet" else g["speed"], "score": score,
+                     "result": "win" if score == 1 else "draw" if score == .5 else "loss",
+                     "line": " ".join(g["moves"].split()[: C.LINE_MAX_PLIES]),
+                     "eco": (g.get("opening") or {}).get("eco", "?"), "opening": (g.get("opening") or {}).get("name", "?"),
+                     "rating": me.get("rating"), "opp_rating": opp.get("rating"),
+                     "created": g["createdAt"], "moves": g["moves"], "user": user})
+    df = pd.DataFrame(rows)
+    con = db()
+    _replace(con, "game_results", df, user)
+    _replace(con, "skipped", pd.DataFrame([(i, why, user) for i, why in skipped], columns=["id", "reason", "user"]), user)
+    con.commit()
+    print(f"{user}: {len(df)} games, skipped {len(skipped)}", flush=True)
+    return df
+
+
+def _replace(con, table, df, user):
+    """Replace one player's rows in a table (creating the table from `df` if needed)."""
+    exists = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    if exists:
+        con.execute(f"DELETE FROM {table} WHERE user=?", (user,))
+    df.to_sql(table, con, if_exists="append", index=False)
+
+
+ERROR_COLUMNS = ["id", "ply", "fen_before", "played", "played_san", "best", "eval_before",
+                 "eval_after", "win_before", "win_after", "drop"]
+
+
+def run(user=C.USER, limit=None):
+    """Results + Stockfish errors for one player. Prints `PROGRESS k/n` lines (read by the dashboard)."""
+    user = user.lower()
+    build_results(user)
+    todo, _ = _split(load_games(user), user)
     if limit:
         todo = todo[:limit]
     con = db()
-    results, all_errors, t0 = [], [], time.time()
+    all_errors, t0 = [], time.time()
+    print(f"PROGRESS 0/{len(todo)}", flush=True)
     ctx = mp.get_context("spawn")
     with ctx.Pool(C.WORKERS, initializer=_init_worker) as pool:
-        for k, (res, errs, new, tag) in enumerate(pool.imap_unordered(analyze_game, todo, chunksize=2), 1):
-            results.append(res)
+        jobs = ((g, user) for g in todo)
+        for k, (res, errs, new, tag) in enumerate(pool.imap_unordered(analyze_game, jobs, chunksize=2), 1):
             all_errors.extend(errs)
             if new:
                 con.executemany("INSERT OR REPLACE INTO evals_v2 VALUES(?,?,?,?,?)",
                                 [(f, tag, v[0], v[1], v[2]) for f, v in new.items()])
                 con.commit()
-            if k % 25 == 0:
-                print(f"  {k}/{len(todo)} games, {time.time()-t0:.0f}s", flush=True)
-    meta = {g["id"]: g for g in games}
-    rows = []
-    for r in results:
-        g = meta[r["id"]]
-        col = r["color"]
-        me, opp = g["players"][col], g["players"]["black" if col == "white" else "white"]
-        w = g.get("winner")
-        score = 0.5 if w is None else 1.0 if w == col else 0.0
-        seq = g["moves"].split()[: C.LINE_MAX_PLIES]
-        speed = "bullet" if g["speed"] == "ultraBullet" else g["speed"]
-        rows.append({**r, "speed": speed, "score": score,
-                     "result": "win" if score == 1 else "draw" if score == .5 else "loss",
-                     "line": " ".join(seq), "eco": (g.get("opening") or {}).get("eco", "?"),
-                     "opening": (g.get("opening") or {}).get("name", "?"),
-                     "rating": me.get("rating"), "opp_rating": opp.get("rating"),
-                     "created": g["createdAt"], "moves": g["moves"]})
-    df = pd.DataFrame(rows)
-    df.to_sql("game_results", con, if_exists="replace", index=False)
-    pd.DataFrame(all_errors, columns=["id", "ply", "fen_before", "played", "played_san", "best", "eval_before",
-                                      "eval_after", "win_before", "win_after", "drop"]
-                 ).to_sql("errors", con, if_exists="replace", index=False)
-    pd.DataFrame(skipped, columns=["id", "reason"]).to_sql("skipped", con, if_exists="replace", index=False)
+            if k % 10 == 0 or k == len(todo):
+                print(f"PROGRESS {k}/{len(todo)} {time.time() - t0:.0f}s", flush=True)
+    errors = pd.DataFrame(all_errors, columns=ERROR_COLUMNS).assign(user=user)
+    _replace(con, "errors", errors, user)
     con.commit()
-    print(f"Analyzed {len(df)} games, skipped {len(skipped)}; {len(all_errors)} errors; "
-          f"{con.execute('select count(*) from evals_v2').fetchone()[0]} cached evals; {time.time()-t0:.0f}s")
-    return df
+    print(f"DONE {user}: {len(todo)} games, {len(errors)} errors; "
+          f"{con.execute('select count(*) from evals_v2').fetchone()[0]} cached evals; {time.time() - t0:.0f}s", flush=True)
 
 
 if __name__ == "__main__":
-    run(int(sys.argv[1]) if len(sys.argv) > 1 else None)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("user", nargs="?", default=C.USER)
+    ap.add_argument("--quick", action="store_true", help="results only, no engine")
+    ap.add_argument("--limit", type=int)
+    a = ap.parse_args()
+    build_results(a.user) if a.quick else run(a.user, a.limit)

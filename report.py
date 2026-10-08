@@ -1,11 +1,13 @@
 """Console summary of the analysis (numbers used in the final report)."""
 import sqlite3
+import sys
 from chessapp import config as C
 from chessapp.stats import load_results, occurrences, opening_table, overall, prepare, problem_positions
-games, errors = load_results()
+user = (sys.argv[1] if len(sys.argv) > 1 else C.USER).lower()
+games, errors = load_results(user)
 df, rel, tree = prepare(games, errors)
 con = sqlite3.connect(C.DB_FILE)
-sk = con.execute("select reason,count(*) from skipped group by reason").fetchall()
+sk = con.execute("select reason,count(*) from skipped where user=? group by reason", (user,)).fetchall()
 print("analyzed", len(df), "skipped", sk, "errors", len(errors))
 print("overall", overall(df))
 print("plies analyzed mean", df.plies_analyzed.mean())

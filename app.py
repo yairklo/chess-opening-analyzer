@@ -1,6 +1,9 @@
 """Streamlit dashboard: opening analysis for a Lichess player (Hebrew, RTL)."""
 import html
 import random
+import subprocess
+import sys
+import time
 
 import altair as alt
 import chess
@@ -9,22 +12,31 @@ import pandas as pd
 import streamlit as st
 
 from chessapp import config as C
+from chessapp.analyze import build_results, users
+from chessapp.fetch_games import FetchError, fetch
 from chessapp.stats import (SORTS, load_results, move_label, occurrences, opening_table, overall, prepare,
                             problem_positions, san_of, study_pgn)
 
-st.set_page_config(page_title=f"ניתוח פתיחות · {C.USER}", page_icon="♞", layout="wide")
+st.set_page_config(page_title="ניתוח פתיחות", page_icon="♞", layout="wide")
 
 COLORS = {"white": "לבן", "black": "שחור"}
 WITH_COLOR = {"white": "עם הלבנים", "black": "עם השחורים"}
-SPEEDS = {"bullet": "בוליט", "blitz": "בליץ", "rapid": "רפיד", "classical": "קלאסי"}
+SPEEDS = {"bullet": "בוליט", "blitz": "בליץ", "rapid": "רפיד", "classical": "קלאסי", "correspondence": "התכתבות"}
 RESULTS = {"win": "ניצחון", "draw": "תיקו", "loss": "הפסד"}
-STATUS = {  # learning status -> (label, tone, explanation)
+STATUS_ME = {  # learning status -> (label, tone, explanation)
     "repeating": ("עדיין חוזרת", "red", "בפעם האחרונה שהגעת לעמדה הזו שיחקת שוב את אותו מסע."),
     "improving": ("בדרך לתיקון", "amber", "בביקורים האחרונים לא חזרת על הטעות, אבל עוד מוקדם לקבוע."),
     "learned": ("נלמדה", "green", f"מאז הטעות האחרונה הגעת לעמדה {C.LEARN_FIXED_AFTER}+ פעמים ולא חזרת עליה."),
     "few": ("מעט נתונים", "gray", f"הגעת לעמדה הזו פחות מ‑{C.LEARN_MIN_REACHED} פעמים, אז עוד אי אפשר לקבוע מגמה."),
 }
-PAGES = {"overview": "סקירה", "openings": "הפתיחות שלי", "mistakes": "טעויות חוזרות", "practice": "תרגול"}
+STATUS_OTHER = {
+    "repeating": ("עדיין חוזרת", "red", "בפעם האחרונה שהעמדה הופיעה שוחק שוב אותו מסע."),
+    "improving": ("בדרך לתיקון", "amber", "בביקורים האחרונים בעמדה הטעות לא חזרה, אבל עוד מוקדם לקבוע."),
+    "learned": ("נלמדה", "green", f"מאז הטעות האחרונה העמדה הופיעה {C.LEARN_FIXED_AFTER}+ פעמים והטעות לא חזרה."),
+    "few": ("מעט נתונים", "gray", f"פחות מ‑{C.LEARN_MIN_REACHED} ביקורים בעמדה, אז עוד אי אפשר לקבוע מגמה."),
+}
+STATUS = STATUS_ME
+CONF = {"high": ("ודאות גבוהה", "green"), "mid": ("ודאות בינונית", "amber"), "low": ("ייתכן מקרי", "gray")}
 RED, GREEN = "#dc2626d0", "#16a34ad0"
 LRM = "‎"  # keeps move sequences left-to-right inside RTL table cells
 
@@ -44,6 +56,7 @@ h1,h2,h3{font-family:'Heebo',sans-serif!important;letter-spacing:-.01em;}
 [data-testid="stCaptionContainer"]{color:var(--muted);}
 [class*="st-key-card"]{background:var(--card);border-radius:16px!important;box-shadow:0 1px 2px rgba(16,24,40,.04);}
 [data-testid="stImage"] img{border-radius:6px;}
+[data-testid="stVegaLiteChart"]{direction:ltr;}  /* RTL flips SVG text anchors: labels would overlap the bars */
 .ltr{direction:ltr;unicode-bidi:isolate;display:inline-block;font-family:'JetBrains Mono',monospace;font-size:.92em;}
 .muted{color:var(--muted);} .small{font-size:.85rem;}
 
@@ -116,31 +129,122 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- data
+# every cached function takes (user, stamp); the stamp changes when that player's data changes
+def data_stamp(user):
+    from chessapp.analyze import db
+    con = db()
+    try:
+        g = con.execute("SELECT count(*), max(created) FROM game_results WHERE user=?", (user,)).fetchone()
+        e = con.execute("SELECT count(*) FROM errors WHERE user=?", (user,)).fetchone()[0]
+    except Exception:
+        return None
+    return (*g, e)
+
+
 @st.cache_data(show_spinner="טוען את המשחקים...")
-def get_data():
-    return load_results()
+def get_data(user, stamp):
+    return load_results(user)
 
 
 @st.cache_data(show_spinner=False)
-def get_occ():
-    return occurrences(get_data()[0])
+def get_occ(user, stamp):
+    return occurrences(get_data(user, stamp)[0])
 
 
 @st.cache_data(show_spinner="מחשב סטטיסטיקות...")
-def get_view(colors: tuple, speeds: tuple):
+def get_view(user, stamp, colors: tuple, speeds: tuple):
     """Filtered games (with each game's first error after its opening line), those errors, and the opening tree."""
-    games, errors = get_data()
+    games, errors = get_data(user, stamp)
     g, rel, tree = prepare(games[games.color.isin(colors) & games.speed.isin(speeds)], errors)
-    return g, rel, opening_table(g, errors[errors.id.isin(g.id)], tree)
+    t = opening_table(g, errors[errors.id.isin(g.id)], tree)
+    if not t.empty:
+        t["diff"] = t.score - t.base
+        # how far the gap is from chance: z-score of the opening's score against the colour average
+        t["z"] = t["diff"] / ((t.base * (1 - t.base) / t.games) ** .5).clip(lower=1e-9)
+        t["conf"] = ["high" if abs(z) >= 2 else "mid" if abs(z) >= 1.3 else "low" for z in t.z]
+    return g, rel, t
 
 
 @st.cache_data(show_spinner="מחפש טעויות חוזרות...")
-def get_problems(colors: tuple, speeds: tuple):
+def get_problems(user, stamp, colors: tuple, speeds: tuple):
     """All mistakes (position + move played) in the filter, both colours."""
-    g, rel, _ = get_view(colors, speeds)
-    occ = get_occ()
+    g, rel, _ = get_view(user, stamp, colors, speeds)
+    occ = get_occ(user, stamp)
     occ = occ[occ.id.isin(g.id)]
     return [p for c in colors for p in problem_positions(g, rel, occ, c)]
+
+
+# ---------------------------------------------------------------- background engine analysis
+def job_log(user):
+    return C.DATA / f"analyze_{user}.log"
+
+
+def start_analysis(user):
+    log = open(job_log(user), "w", encoding="utf-8")
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    subprocess.Popen([sys.executable, "-m", "chessapp.analyze", user], cwd=C.ROOT, stdout=log,
+                     stderr=subprocess.STDOUT, creationflags=flags)
+
+
+def job_state(user):
+    """('none'|'running'|'done'|'failed', done, total) from the job's log file."""
+    f = job_log(user)
+    if not f.exists():
+        return "none", 0, 0
+    text = f.read_text(encoding="utf-8", errors="replace")
+    prog = [l.split()[1].split("/") for l in text.splitlines() if l.startswith("PROGRESS")]
+    k, n = map(int, prog[-1]) if prog else (0, 0)
+    if "DONE" in text:
+        return "done", k, n
+    if "Traceback" in text or time.time() - f.stat().st_mtime > 300:
+        return "failed", k, n
+    return "running", k, n
+
+
+@st.fragment(run_every=3)
+def analysis_progress(user):
+    state, k, n = job_state(user)
+    if state == "running":
+        st.progress(k / n if n else 0.0, text=f"Stockfish מנתח: {k} מתוך {n or '?'} משחקים")
+        st.caption("אפשר להמשיך לעבוד בינתיים – הטעויות יופיעו כשהניתוח יסתיים.")
+    else:
+        st.rerun(scope="app")
+
+
+def engine_panel(user, has_errors):
+    """Sidebar block: engine analysis status for the selected player."""
+    state, _, _ = job_state(user)
+    if state == "running":
+        analysis_progress(user)
+    elif has_errors:
+        st.caption(f"✓ נותח ב‑Stockfish (עומק {C.ENGINE_DEPTH}).")
+    else:
+        if state == "failed":
+            st.error("הניתוח נכשל. אפשר לנסות שוב.")
+        n = len(df)
+        st.caption(f"הטעויות בפתיחה עוד לא נותחו. ניתוח {n:,} משחקים לוקח בערך {max(1, round(n * 0.65 / 60))} דקות.")
+        st.button("נתח טעויות ב‑Stockfish", on_click=start_analysis, args=(user,), icon=":material/memory:",
+                  width="stretch", key="run_engine")
+
+
+def add_player(name, n):
+    name = name.strip()
+    try:
+        with st.status(f"מוריד את {n} המשחקים האחרונים של {name}...", expanded=True) as box:
+            line = st.empty()
+            got = fetch(name, refresh=True, max_games=n, on_progress=lambda k: line.write(f"{k} משחקים..."))
+            line.write(f"{got} משחקים הורדו. בונה את עץ הפתיחות...")
+            build_results(name)
+            box.update(label=f"{name} נטען", state="complete")
+    except FetchError as e:
+        st.error({"not found": f"לא נמצא ב‑Lichess שחקן בשם '{name}'.", "valid": "שם המשתמש לא תקין."}.get(
+            next((k for k in ("not found", "valid") if k in str(e)), ""), f"לא נמצאו משחקים עבור '{name}'."))
+        return
+    except Exception as e:  # network problems, rate limits...
+        st.error(f"ההורדה נכשלה: {e}")
+        return
+    st.session_state.pending_user = name.lower()
+    st.rerun()
 
 
 @st.cache_data(show_spinner=False)
@@ -230,7 +334,7 @@ def board_svg(board, color, last=None, arrows=(), size=460):
 
 
 def arrow_legend():
-    return ('<div class="legend"><span><i style="background:#dc2626"></i>המסע ששיחקת</span>'
+    return (f'<div class="legend"><span><i style="background:#dc2626"></i>{you("המסע ששיחקת", "המסע ששוחק")}</span>'
             '<span><i style="background:#16a34a"></i>המסע המומלץ</span></div>')
 
 
@@ -250,7 +354,7 @@ def explorer_html(ex, color):
         mine = m["white"] if color == "white" else m["black"]
         rows.append(f'<tr><td class="ltr">{esc(m["san"])}</td><td>{t:,}</td><td>{pct(t / tot) if tot else ""}</td>'
                     f'<td>{pct((mine + m["draws"] / 2) / t) if t else ""}</td></tr>')
-    return ('<div class="note"><b>מה משחקים שחקנים ברמה שלך (Lichess)</b></div>'
+    return (f'<div class="note"><b>מה משחקים שחקנים ברמה {you("שלך", "דומה")} (Lichess)</b></div>'
             '<table style="width:100%;font-size:.84rem"><tr><th>מסע</th><th>משחקים</th><th>שכיחות</th><th>אחוז נקודות</th></tr>'
             + "".join(rows) + "</table>")
 
@@ -274,22 +378,50 @@ def set_state(k, v):
     st.session_state[k] = v
 
 
-# ---------------------------------------------------------------- load + filters
-try:
-    df, all_errors = get_data()
-except Exception:
+# ---------------------------------------------------------------- player, load + filters
+players = users()
+if not players:
     st.error("לא נמצאו תוצאות ניתוח. הריצו קודם בטרמינל: python run_all.py")
     st.stop()
-
-avail = [s for s in SPEEDS if s in set(df.speed)] + sorted(set(df.speed) - set(SPEEDS))
+if "pending_user" in st.session_state:  # set by add_player before the selectbox exists
+    st.session_state.user = st.session_state.pop("pending_user")
+if st.session_state.get("user") not in players:
+    st.session_state.user = players[0]
 
 with st.sidebar:
-    md(f'<div class="brand">♞ ניתוח <span>פתיחות</span></div>')
-    pick = st.segmented_control("אני משחק עם", ["all", "white", "black"], default="all", key="f_color",
+    md('<div class="brand">♞ ניתוח <span>פתיחות</span></div>')
+    user = st.selectbox("שחקן", players, key="user",
+                        format_func=lambda u: f"{u} (אני)" if u == C.USER.lower() else u)
+    with st.popover("הוספת שחקן מ‑Lichess", icon=":material/person_add:", width="stretch"):
+        with st.form("add_player", border=False, clear_on_submit=True):
+            name = st.text_input("שם משתמש ב‑Lichess", placeholder="למשל DrNykterstein")
+            n_games = st.segmented_control("כמה משחקים אחרונים", [200, 500, 1000], default=500)
+            st.caption("ההורדה לוקחת בערך דקה לכל 500 משחקים. עץ הפתיחות והחולשות מוכנים מיד אחריה; "
+                       "את הטעויות אפשר לנתח במנוע אחר כך.")
+            go_add = st.form_submit_button("הורד ונתח", type="primary", width="stretch")
+        if go_add and name.strip():
+            add_player(name, n_games or 500)
+
+me = user == C.USER.lower()
+STATUS = STATUS_ME if me else STATUS_OTHER
+stamp = data_stamp(user)
+df, all_errors = get_data(user, stamp)
+avail = [s for s in SPEEDS if s in set(df.speed)] + sorted(set(df.speed) - set(SPEEDS))
+
+
+def you(mine, theirs):
+    """Second person for the default player, the player's name (or a neutral form) for anyone else."""
+    return mine if me else theirs
+
+
+with st.sidebar:
+    engine_panel(user, len(all_errors) > 0)
+    st.divider()
+    pick = st.segmented_control(you("אני משחק עם", "צבע"), ["all", "white", "black"], default="all", key="f_color",
                                 format_func={"all": "שני הצבעים", **COLORS}.get, width="stretch")
     colors = [pick] if pick in COLORS else list(COLORS)
     if len(avail) > 1:
-        speeds = st.multiselect("קצב משחק", avail, avail, format_func=lambda s: SPEEDS.get(s, s))
+        speeds = st.multiselect("קצב משחק", avail, avail, format_func=lambda s: SPEEDS.get(s, s), key=f"speeds_{user}")
     else:
         speeds = avail
         st.caption(f"כל המשחקים בקצב {SPEEDS.get(avail[0], avail[0])}.")
@@ -307,13 +439,14 @@ with st.sidebar:
 <dt>טעות חוזרת</dt><dd>אותו מסע שגוי באותה עמדה ב‑{C.MIN_PROBLEM_GAMES} משחקים או יותר.</dd>
 <dt>טעות שנלמדה</dt><dd>{STATUS["learned"][2]}</dd>
 </dl>""")
-    st.caption(f"Stockfish, עומק {C.ENGINE_DEPTH} קבוע לכל עמדה. פתיחה מוצגת רק אם שיחקת אותה {C.MIN_GROUP_GAMES}+ פעמים.")
+    st.caption(f"Stockfish, עומק {C.ENGINE_DEPTH} קבוע לכל עמדה. פתיחה מוצגת רק אם שוחקה {C.MIN_GROUP_GAMES}+ פעמים.")
 
 if df[df.color.isin(colors) & df.speed.isin(speeds)].empty:
     empty("אין משחקים שמתאימים לסינון. שנו את הבחירה בסרגל הצד.")
     st.stop()
-fdf, rel, tbl = get_view(tuple(colors), tuple(speeds))
-probs = get_problems(tuple(colors), tuple(speeds))
+fdf, rel, tbl = get_view(user, stamp, tuple(colors), tuple(speeds))
+probs = get_problems(user, stamp, tuple(colors), tuple(speeds))
+analyzed = len(all_errors) > 0
 
 
 def node_games(op):
@@ -322,16 +455,22 @@ def node_games(op):
     return fdf[(fdf.color == op.color) & fdf.line.str.split().map(lambda s: s[:len(pre)] == pre)]
 
 # ---------------------------------------------------------------- header
-by_time = df[df.speed.isin(speeds)].sort_values("created")
-first_d, last_d = by_time.created.iat[0], by_time.created.iat[-1]
+sel = df[df.speed.isin(speeds)]
+main_speed = sel.speed.mode().iat[0]  # ratings are per speed: chart the most played one
+by_time = sel[sel.speed == main_speed].sort_values("created")
+first_d, last_d = sel.created.min(), sel.created.max()
 r_now, r_change = int(by_time.rating.iat[-1]), int(by_time.rating.iat[-1] - by_time.rating.iat[0])
 trend = f'<span class="{"up" if r_change >= 0 else "down"}">{"▲" if r_change >= 0 else "▼"} {abs(r_change)} בתקופה</span>'
-speed_txt = SPEEDS.get(speeds[0], speeds[0]) if len(speeds) == 1 else ""
-md(f"""<div class="hero"><div><div class="eyebrow">LICHESS · {esc(C.USER)}</div><h1>ניתוח הפתיחות שלך</h1>
-<p>{len(fdf):,} משחקי {speed_txt} · {fmt_date(first_d)} – {fmt_date(last_d)} · {C.ANALYZE_PLIES // 2} המסעים הראשונים בכל משחק נבדקו במנוע Stockfish</p></div>
-<div class="rating"><div class="k">דירוג נוכחי</div><div class="v">{r_now}</div>{trend}</div></div>""")
+speed_txt = f"משחקי {SPEEDS.get(speeds[0], speeds[0])}" if len(speeds) == 1 else "משחקים"
+engine_txt = (f"{C.ANALYZE_PLIES // 2} המסעים הראשונים בכל משחק נבדקו במנוע Stockfish" if analyzed
+              else "הטעויות עוד לא נותחו במנוע (אפשר להפעיל בסרגל הצד)")
+md(f"""<div class="hero"><div><div class="eyebrow">LICHESS · {esc(user)}</div><h1>{you("ניתוח הפתיחות שלך", f"ניתוח הפתיחות של {esc(user)}")}</h1>
+<p>{len(fdf):,} {speed_txt} · {fmt_date(first_d)} – {fmt_date(last_d)} · {engine_txt}</p></div>
+<div class="rating"><div class="k">דירוג {SPEEDS.get(main_speed, main_speed)} נוכחי</div><div class="v">{r_now}</div>{trend}</div></div>""")
 
-if "page" not in st.session_state:
+PAGES = {"overview": "סקירה", "weak": "נקודות חולשה", "openings": you("הפתיחות שלי", "פתיחות"),
+         "mistakes": "טעויות חוזרות", **({"practice": "תרגול"} if me else {})}
+if st.session_state.get("page") not in PAGES:
     st.session_state.page = "overview"
 page = st.segmented_control("ניווט", list(PAGES), key="page", format_func=PAGES.get, label_visibility="collapsed")
 if page is None:  # clicking the active segment deselects it; stay where we were
@@ -446,11 +585,12 @@ def page_overview():
 
     trend_section()
 
-    section("על מה כדאי לעבוד קודם",
-            "הפתיחות שעולות לך הכי הרבה נקודות ביחס לממוצע שלך באותו צבע – שיפור בהן ישפיע הכי מהר על התוצאות.")
+    section(you("על מה כדאי לעבוד קודם", f"הפתיחות היקרות ביותר ל‑{esc(user)}"),
+            you("הפתיחות שעולות לך הכי הרבה נקודות ביחס לממוצע שלך באותו צבע – שיפור בהן ישפיע הכי מהר על התוצאות.",
+                f"הפתיחות שעולות ל‑{esc(user)} הכי הרבה נקודות ביחס לממוצע באותו צבע – לשם כדאי לכוון את המשחק."))
     top = focus_openings(3)
     if top.empty:
-        empty("אין פתיחה שמורידה את הממוצע שלך. יפה!")
+        empty(you("אין פתיחה שמורידה את הממוצע שלך. יפה!", "אין פתיחה שמורידה את הממוצע באופן בולט."))
     else:
         cols = st.columns(len(top))
         for i, (col, r) in enumerate(zip(cols, top.itertuples())):
@@ -473,17 +613,18 @@ def page_overview():
             a, b, c2 = st.columns([4, 1.3, 1.3], vertical_alignment="center")
             with a:
                 rep = sum(p["status"] == "repeating" for p in rec)
-                md(f'<div class="card-h"><span class="t">יש {len(rec)} טעויות שחזרת עליהן ב‑{C.MIN_PROBLEM_GAMES} משחקים או יותר</span></div>'
-                   f'<div class="muted small">ב‑{rep} מהן טעית שוב גם בפעם האחרונה שהגעת לעמדה. אלה המקומות הכי קלים לתקן.</div>')
+                md(f'<div class="card-h"><span class="t">{you(f"יש {len(rec)} טעויות שחזרת עליהן", f"{len(rec)} טעויות חוזרות של {esc(user)}")} ב‑{C.MIN_PROBLEM_GAMES} משחקים או יותר</span></div>'
+                   f'<div class="muted small">{you(f"ב‑{rep} מהן טעית שוב גם בפעם האחרונה שהגעת לעמדה. אלה המקומות הכי קלים לתקן.", f"ב‑{rep} מהן הטעות חזרה גם בפעם האחרונה. כדאי להוביל לעמדות האלה.")}</div>')
             b.button("לרשימת הטעויות", on_click=go, args=("mistakes",), width="stretch")
-            c2.button("להתחיל לתרגל", on_click=go, args=("practice",), type="primary", width="stretch")
+            if me:
+                c2.button("להתחיל לתרגל", on_click=go, args=("practice",), type="primary", width="stretch")
 
     a, b = st.columns(2, gap="large")
     with a:
         section("הדירוג לאורך זמן")
         st.altair_chart(chart_rating(), width="stretch")
     with b:
-        section("באיזה מסע מגיעה הטעות הראשונה", "מספר המשחקים לפי המסע שבו טעית לראשונה")
+        section("באיזה מסע מגיעה הטעות הראשונה", "מספר המשחקים לפי המסע של הטעות הראשונה")
         st.altair_chart(chart_error_moves(), width="stretch")
 
 
@@ -511,13 +652,13 @@ def board_viewer(r, color, key):
         best = san_of(r.fen_before, r.best)
         if decision:
             md(f'<div class="card-h"><span class="t">רגע ההחלטה</span><span class="badge b-blue">מסע {(err + 1) // 2}</span></div>'
-               f'<div class="cmp"><div class="bad"><div class="k">שיחקת</div><div class="v">{esc(r.played_san)}</div></div>'
+               f'<div class="cmp"><div class="bad"><div class="k">{you("שיחקת", "שוחק")}</div><div class="v">{esc(r.played_san)}</div></div>'
                f'<div class="good"><div class="k">עדיף</div><div class="v">{esc(best)}</div></div></div>'
-               f'<div class="note">סיכויי הניצחון שלך לפי המנוע: <b>{r.win_before:.0f}%</b> לפני המסע ← <b>{r.win_after:.0f}%</b> אחרי.</div>'
+               f'<div class="note">סיכויי הניצחון {you("שלך", f"של {esc(user)}")} לפי המנוע: <b>{r.win_before:.0f}%</b> לפני המסע ← <b>{r.win_after:.0f}%</b> אחרי.</div>'
                f'{arrow_legend()}')
         elif ply == err:
             md(f'<div class="card-h"><span class="t">אחרי הטעות</span></div>'
-               f'<div class="note">החץ האדום מראה את המסע ששיחקת. לחצו "רגע הטעות" כדי לראות מה היה עדיף.</div>')
+               f'<div class="note">החץ האדום מראה את {you("המסע ששיחקת", "המסע ששוחק")}. לחצו "רגע הטעות" כדי לראות מה היה עדיף.</div>')
         else:
             md(f'<div class="card-h"><span class="t">מהלך המשחק</span></div>'
                f'<div class="note">עברו קדימה עד רגע הטעות, או לחצו "רגע הטעות" כדי לקפוץ ישר אליו.</div>')
@@ -540,8 +681,8 @@ def short_name(r):
 
 
 def page_openings():
-    section("עץ הפתיחות שלך",
-            f"כל רצף ששיחקת לפחות {C.MIN_GROUP_GAMES} פעמים. כל שורה כוללת גם את ההמשכים שלה (המוזחים מתחתיה). "
+    section(you("עץ הפתיחות שלך", f"עץ הפתיחות של {esc(user)}"),
+            f"כל רצף ששוחק לפחות {C.MIN_GROUP_GAMES} פעמים. כל שורה כוללת גם את ההמשכים שלה (המוזחים מתחתיה). "
             "בחרו שורה כדי לראות את הטעויות בה על הלוח.")
     if tbl.empty:
         empty("אין פתיחה ששוחקה מספיק פעמים בסינון הנוכחי.")
@@ -549,11 +690,12 @@ def page_openings():
     a, b, _ = st.columns([1.4, 1.4, 2])
     show = a.segmented_control("הצג", ["all", "toxic"], default="all", key="op_show",
                                format_func={"all": "כל הפתיחות", "toxic": f"רק בעייתיות ({int(tbl.toxic.sum())})"}.get)
-    sort = b.selectbox("סדר", ["order", "cost", "score", "games"], key="op_sort",
-                       format_func={"order": "לפי העץ", "cost": "הכי הרבה נקודות שאבדו", "score": "אחוז נקודות נמוך",
+    sort = b.selectbox("סדר", ["order", "diff", "cost", "score", "games"], key="op_sort",
+                       format_func={"order": "לפי העץ", "diff": "מול הממוצע בצבע (החלשות קודם)",
+                                    "cost": "הכי הרבה נקודות שאבדו", "score": "אחוז נקודות נמוך",
                                     "games": "הכי הרבה משחקים"}.get)
     t = tbl[tbl.toxic] if show == "toxic" else tbl
-    t = t.sort_values(sort, ascending=sort in ("order", "score")).reset_index(drop=True)
+    t = t.sort_values(sort, ascending=sort in ("order", "score", "diff")).reset_index(drop=True)
     if t.empty:
         empty("אין פתיחות בעייתיות בסינון הנוכחי.")
         return
@@ -574,7 +716,7 @@ def page_openings():
                        "מסעים": st.column_config.TextColumn(width=165, alignment="left"),
                        "משחקים": st.column_config.NumberColumn(width=60, help="כולל כל ההמשכים של הרצף"),
                        "אחוז נקודות": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%", width=105),
-                       "מול הממוצע": st.column_config.NumberColumn(format="%+.0f%%", width=80, help="לעומת הממוצע שלך באותו צבע"),
+                       "מול הממוצע": st.column_config.NumberColumn(format="%+.0f%%", width=80, help=you("לעומת הממוצע שלך באותו צבע", "לעומת הממוצע של השחקן באותו צבע")),
                        "נקודות שאבדו": st.column_config.NumberColumn(format="%.1f", width=85, help="משחקים × (הממוצע באותו צבע − אחוז הנקודות בפתיחה)"),
                        "הטעות הנפוצה": st.column_config.TextColumn(width=105, alignment="right",
                                                                   help="הטעות הראשונה הנפוצה אחרי רצף הפתיחה, ובכמה משחקים היא קרתה")})
@@ -596,7 +738,7 @@ def opening_detail(op):
            f'{moves_html(op.group.split())}'
            f'<div class="stats"><div><div class="k">משחקים</div><div class="v">{op.games}</div></div>'
            f'<div><div class="k">אחוז נקודות</div><div class="v">{pct(op.score)}</div></div>'
-           f'<div><div class="k">מול הממוצע שלך ב{COLORS[color]}</div><div class="v" style="color:{"var(--green)" if diff >= 0 else "var(--red)"}"><span dir="ltr">{diff:+.0f}%</span></div></div>'
+           f'<div><div class="k">מול הממוצע {you("שלך", f"של {esc(user)}")} ב{COLORS[color]}</div><div class="v" style="color:{"var(--green)" if diff >= 0 else "var(--red)"}"><span dir="ltr">{diff:+.0f}%</span></div></div>'
            f'<div><div class="k">טעות עד מסע {C.EARLY_ERROR_MOVE}</div><div class="v">{pct(op.early_error_share)}</div></div></div>'
            f'{wdl(op.win, op.draw, op.loss)}')
 
@@ -617,17 +759,21 @@ def opening_detail(op):
         errs = e.rename(columns={"ply": "first_error_ply"}).merge(scope[["id", "moves", "result", "created"]], on="id")
         info = {(p["color"], p["key"], p["played"]): p for p in probs}
         errs["info"] = [info.get((color, k, m)) for k, m in zip(errs.key, errs.played_san)]
-        hide = st.toggle("הסתר טעויות שכבר למדתי", True, key="op_hide")
+        hide = st.toggle(you("הסתר טעויות שכבר למדתי", "הסתר טעויות שנלמדו"), True, key="op_hide")
         if hide:
-            errs = errs[[not (i and i["status"] == "learned") for i in errs["info"]]]
+            errs = errs[[not (i and i["status"] == "learned") for i in errs["info"]]] if len(errs) else errs
         errs = errs.sort_values("drop", ascending=False).reset_index(drop=True)
+        if not analyzed:
+            md('<div class="sec" style="margin-top:1.2rem"><h3>הטעויות בפתיחה הזו</h3></div>')
+            empty("הטעויות עוד לא נותחו במנוע. אפשר להפעיל את הניתוח בסרגל הצד.")
+            return
         md(f'<div class="sec" style="margin-top:1.2rem"><h3>הטעויות בפתיחה הזו ({len(errs)})</h3>'
            f'<p>הטעות הראשונה בכל משחק אחרי רצף הפתיחה, מהיקרה לזולה. בחרו טעות כדי לראות אותה על הלוח.</p></div>')
         if errs.empty:
             empty("אין טעויות פתוחות בפתיחה הזו.")
             return
         ev = rtl_table(pd.DataFrame({
-            "המסע שלך": [LRM + move_label(int(p), s) + LRM for p, s in zip(errs.first_error_ply, errs.played_san)],
+            you("המסע שלך", "המסע ששוחק"): [LRM + move_label(int(p), s) + LRM for p, s in zip(errs.first_error_ply, errs.played_san)],
             "עדיף": [LRM + (san_of(f, b) or "") + LRM for f, b in zip(errs.fen_before, errs.best)],
             "סיכויי ניצחון": [f"{a:.0f}% ← {b:.0f}%" for a, b in zip(errs.win_before, errs.win_after)],
             "חזרת על הטעות": [f"{i['mistakes']} מתוך {i['reached']}" if i else "—" for i in errs["info"]],
@@ -636,7 +782,7 @@ def opening_detail(op):
             on_select="rerun", selection_mode="single-row",
             key=f"errs_{op.key}_{hide}", height=min(38 + 35 * len(errs), 250),
             column_config={"סיכויי ניצחון": st.column_config.TextColumn(
-                alignment="right", help="סיכויי הניצחון שלך לפי המנוע: לפני המסע ← אחריו")})
+                alignment="right", help="סיכויי הניצחון לפי המנוע: לפני המסע ← אחריו")})
         r = errs.iloc[ev.selection.rows[0] if ev.selection.rows else 0]
         st.markdown("")
         board_viewer(r, color, op.key)
@@ -647,11 +793,11 @@ def usual_html(p):
     """What the user usually plays in this position (all visits, not only the mistakes)."""
     moves = " · ".join(f'<span class="ltr">{esc(m)}</span> ×{c}' for m, c in list(p["moves"].items())[:4])
     if p["usual"] == p["played"]:
-        head = f'<b>זה המסע הקבוע שלך כאן</b> ({p["usual_n"]} מתוך {p["reached"]} פעמים).'
+        head = f'<b>{you("זה המסע הקבוע שלך כאן", "זה המסע הקבוע בעמדה הזו")}</b> ({p["usual_n"]} מתוך {p["reached"]} פעמים).'
     else:
-        head = (f'בדרך כלל אתה משחק כאן <span class="ltr">{esc(p["usual"])}</span> '
+        head = (f'{you("בדרך כלל אתה משחק כאן", "המסע הרגיל בעמדה הוא")} <span class="ltr">{esc(p["usual"])}</span> '
                 f'({p["usual_n"]} מתוך {p["reached"]}), והטעות היא סטייה.')
-    return f'{head} כל המסעים ששיחקת בעמדה: {moves}'
+    return f'{head} כל המסעים בעמדה: {moves}'
 
 
 def mistake_card(p, n):
@@ -666,15 +812,15 @@ def mistake_card(p, n):
             md(f'<div class="card-h"><span class="rank">#{n}</span>{chip(p["color"])}{badge(p["status"])}</div>'
                f'<div class="card-h"><span class="t">{esc(p["opening"])}</span></div>'
                f'{moves_html(p["pre_moves"])}'
-               f'<div class="cmp"><div class="bad"><div class="k">שיחקת</div><div class="v">{esc(move_label(p["ply"], p["played"]))}</div></div>'
+               f'<div class="cmp"><div class="bad"><div class="k">{you("שיחקת", "שוחק")}</div><div class="v">{esc(move_label(p["ply"], p["played"]))}</div></div>'
                f'<div class="good"><div class="k">עדיף לשחק</div><div class="v">{esc(move_label(p["ply"], p["best_san"] or "?"))}</div></div></div>'
-               f'<div class="stats"><div><div class="k">חזרת על הטעות</div><div class="v">{p["mistakes"]} מתוך {p["reached"]}</div></div>'
+               f'<div class="stats"><div><div class="k">{you("חזרת על הטעות", "חזרות על הטעות")}</div><div class="v">{p["mistakes"]} מתוך {p["reached"]}</div></div>'
                f'<div><div class="k">סיכויי ניצחון</div><div class="v">{p["win_before"]:.0f}% ← {p["win_after"]:.0f}%</div></div>'
                f'<div><div class="k">אחוז נקודות במשחקים</div><div class="v">{pct(p["score"])}</div></div>'
                f'<div><div class="k">פעם אחרונה</div><div class="v">{fmt_date(p["last_mistake"]) if p["last_mistake"] else "—"}</div></div></div>'
                f'<div class="note">{usual_html(p)}</div>'
                f'<div class="note">{why} '
-               f'"חזרת על הטעות" = בכמה מהפעמים שהגעת לעמדה הזו שיחקת את אותו מסע.</div>'
+               f'{you("\"חזרת על הטעות\" = בכמה מהפעמים שהגעת לעמדה הזו שיחקת את אותו מסע.", "\"חזרות על הטעות\" = בכמה מהפעמים שהעמדה הופיעה שוחק אותו מסע.")}</div>'
                f'<div class="note" style="margin-top:10px">המשחקים:</div>{game_links(p["games"], p["color"], p["ply"])}')
             if C.LICHESS_TOKEN:
                 rating = int(fdf[fdf.color == p["color"]].rating.median())
@@ -684,11 +830,18 @@ def mistake_card(p, n):
 
 
 def page_mistakes():
+    if not analyzed:
+        section("טעויות שחוזרות על עצמן")
+        empty(f"הטעויות של {esc(user)} עוד לא נותחו במנוע. "
+              "הפעילו את הניתוח בסרגל הצד (\"נתח טעויות ב‑Stockfish\"); בינתיים מסך נקודות החולשה כבר מוכן.")
+        return
     rec = [p for p in probs if p["count"] >= C.MIN_PROBLEM_GAMES]
     counts = {s: sum(p["status"] == s for p in rec) for s in STATUS}
     section("טעויות שחוזרות על עצמן",
-            f"עמדות שבהן שיחקת את אותו מסע שגוי ב‑{C.MIN_PROBLEM_GAMES} משחקים או יותר. לכל טעות: איך הגעת לעמדה, מה שיחקת, "
-            "מה עדיף, מה אתה משחק שם בדרך כלל, והאם הפסקת לחזור עליה.")
+            you(f"עמדות שבהן שיחקת את אותו מסע שגוי ב‑{C.MIN_PROBLEM_GAMES} משחקים או יותר. לכל טעות: איך הגעת לעמדה, "
+                "מה שיחקת, מה עדיף, מה אתה משחק שם בדרך כלל, והאם הפסקת לחזור עליה.",
+                f"עמדות שבהן אותו מסע שגוי של {esc(user)} חזר ב‑{C.MIN_PROBLEM_GAMES} משחקים או יותר: איך מגיעים לעמדה, "
+                "מה שוחק, מה עדיף, מה המסע הרגיל שם, והאם הטעות עדיין חוזרת. שימושי להכנה לקראת משחק."))
     c = st.columns(4)
     c[0].markdown(kpi("טעויות חוזרות", len(rec), f"אותו מסע שגוי ב‑{C.MIN_PROBLEM_GAMES} משחקים או יותר"), unsafe_allow_html=True)
     c[1].markdown(kpi("עדיין חוזרות", counts["repeating"], STATUS["repeating"][2], "red"), unsafe_allow_html=True)
@@ -712,11 +865,11 @@ def page_mistakes():
         return
     a, b = st.columns([3, 1.3], vertical_alignment="center")
     a.caption("ייצוא העמדות כקובץ PGN: ב‑Lichess פותחים Study ← Add chapter ← PGN ומדביקים או מעלים את הקובץ. "
-              "כל עמדה הופכת לפרק: המסע המומלץ הוא הקו הראשי והמסע ששיחקת – וריאציה.")
+              "כל עמדה הופכת לפרק: המסע המומלץ הוא הקו הראשי והמסע ששוחק – וריאציה.")
     b.download_button(f"ייצוא {len(items)} עמדות ל‑PGN", study_pgn(items), file_name="opening-mistakes.pgn",
                       mime="application/x-chess-pgn", icon=":material/download:", width="stretch")
     if not C.LICHESS_TOKEN:
-        st.caption("כדי לראות גם מה משחקים שחקנים ברמה שלך בכל עמדה (Lichess Opening Explorer) צריך להגדיר LICHESS_TOKEN – "
+        st.caption("כדי לראות גם מה משחקים שחקנים ברמה דומה בכל עמדה (Lichess Opening Explorer) צריך להגדיר LICHESS_TOKEN – "
                    "מאז 2025 ה‑API דורש טוקן. ראו README.")
     sig = f"{scope}|{sort}|{hide}|{colors}"
     if st.session_state.get("mk_sig") != sig:
@@ -730,14 +883,14 @@ def page_mistakes():
     with st.expander(f"כל {len(items)} הטעויות בטבלה אחת"):
         rtl_table(pd.DataFrame({
             "צבע": [COLORS[p["color"]] for p in items], "פתיחה": [p["opening"] for p in items],
-            "שיחקת": [LRM + move_label(p["ply"], p["played"]) + LRM for p in items],
+            you("שיחקת", "שוחק"): [LRM + move_label(p["ply"], p["played"]) + LRM for p in items],
             "עדיף": [LRM + move_label(p["ply"], p["best_san"] or "?") + LRM for p in items],
-            "הגעת לעמדה": [p["reached"] for p in items], "טעית": [p["mistakes"] for p in items],
+            "ביקורים בעמדה": [p["reached"] for p in items], "טעויות": [p["mistakes"] for p in items],
             "שיעור טעות": [p["rate"] * 100 for p in items], "מצב": [STATUS[p["status"]][0] for p in items],
             "בדרך כלל": [LRM + p["usual"] + LRM for p in items],
             "ירידה בסיכויים": [p["avg_drop"] for p in items], "פעם אחרונה": [p["last_mistake"] for p in items]}),
             column_config={"שיעור טעות": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%"),
-                           "בדרך כלל": st.column_config.TextColumn(alignment="right", help="המסע שאתה משחק הכי הרבה בעמדה הזו"),
+                           "בדרך כלל": st.column_config.TextColumn(alignment="right", help="המסע ששוחק הכי הרבה בעמדה הזו"),
                            "ירידה בסיכויים": st.column_config.NumberColumn(format="%.0f%%", help="ממוצע הירידה בסיכויי הניצחון")})
 
 
@@ -831,4 +984,97 @@ def page_practice():
                 md(f'<div class="note">כאן טעית ב‑{p["mistakes"]} מתוך {p["reached"]} הפעמים שהגעת לעמדה.</div>')
 
 
-{"overview": page_overview, "openings": page_openings, "mistakes": page_mistakes, "practice": page_practice}[page]()
+# ---------------------------------------------------------------- weaknesses
+WEAK_CSS = """<style>
+.witem{padding:10px 0;border-top:1px solid var(--gray-50);} .witem:first-of-type{border-top:none;}
+.wtitle{font-weight:700;font-size:.95rem;margin:4px 0 2px;} .wtitle.red{color:var(--red);} .wtitle.green{color:var(--green);}
+</style>"""
+
+
+def non_overlapping(rows, n):
+    """Up to n tree rows, skipping any whose ancestor or descendant is already picked (they share games)."""
+    picked = []
+    for r in rows:
+        if all(not (r.group.startswith(q.group + " ") or q.group.startswith(r.group + " ")) for q in picked):
+            picked.append(r)
+        if len(picked) == n:
+            break
+    return picked
+
+
+def weak_item(r, tone):
+    label, ctone = CONF[r.conf]
+    err = (f' · טעות נפוצה: <span class="ltr">{esc(r.top_error)}</span> ב‑{r.top_error_count} משחקים'
+           if r.top_error and r.top_error_count >= 2 else "")
+    return (f'<div class="witem"><div class="card-h"><span class="t">{esc(r.opening)}</span>'
+            f'<span class="badge b-{ctone}">{label}</span></div>'
+            f'<div class="moves" style="line-height:1.6">{esc(r.line)}</div>'
+            f'<div class="note"><b style="color:var(--{tone})">{pct(r.score)}</b> לעומת ממוצע של {pct(r.base)} '
+            f'(<span dir="ltr">{r.diff * 100:+.0f}%</span>) ב‑{r.games} משחקים{err}</div></div>')
+
+
+def weak_chart(t):
+    d = t.sort_values("diff").reset_index(drop=True)
+    # labels must be unique for the y axis; zero-width spaces keep look-alike rows apart
+    d["label"] = [f"{o[:32]}{'…' if len(o) > 32 else ''}  ·  {' '.join(l.split()[-2:])}" + "​" * i
+                  for i, (o, l) in enumerate(zip(d.opening, d.line))]
+    d["pp"] = d["diff"] * 100
+    d["kind"] = ["weak" if x < 0 else "strong" for x in d.pp]
+    d["alpha"] = d.conf.map({"high": 1.0, "mid": .7, "low": .35})
+    d["conf_label"] = d.conf.map(lambda c: CONF[c][0])
+    bars = alt.Chart(d).mark_bar(cornerRadius=3, size=14).encode(
+        y=alt.Y("label:N", sort=list(d.label), title=None,
+                axis=alt.Axis(orient="right", labelLimit=340, labelFontSize=12, ticks=False, domain=False)),
+        x=alt.X("pp:Q", title="נקודות אחוז מול הממוצע בצבע", axis=alt.Axis(format="+.0f", grid=True)),
+        color=alt.Color("kind:N", scale=alt.Scale(domain=["weak", "strong"], range=["#ef4444", "#22c55e"]), legend=None),
+        opacity=alt.Opacity("alpha:Q", scale=None, legend=None),
+        tooltip=[alt.Tooltip("opening:N", title="פתיחה"), alt.Tooltip("line:N", title="מסעים"),
+                 alt.Tooltip("games:Q", title="משחקים"), alt.Tooltip("score:Q", title="אחוז נקודות", format=".0%"),
+                 alt.Tooltip("base:Q", title="ממוצע בצבע", format=".0%"),
+                 alt.Tooltip("pp:Q", title="פער", format="+.0f"), alt.Tooltip("conf_label:N", title="ודאות")])
+    zero = alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(color="#9ca3af").encode(x="x:Q")
+    return (bars + zero).properties(height=24 * len(d) + 30)
+
+
+def open_selected(k):
+    if st.session_state.get(k):
+        go("openings", st.session_state[k])
+
+
+def page_weak():
+    md(WEAK_CSS)
+    section(you("נקודות החולשה שלך בפתיחות", f"נקודות החולשה של {esc(user)} בפתיחות"),
+            f"כל פתיחה מושווית לאחוז הנקודות הממוצע {you('שלך', f'של {esc(user)}')} באותו צבע, כך שרואים איפה התוצאות "
+            "נופלות או עולות ביחס לרמה הרגילה. החישוב מבוסס על תוצאות המשחקים בלבד, בלי מנוע. "
+            "\"ודאות\" אומרת עד כמה הפער גדול ביחס למספר המשחקים: פער ב‑10 משחקים יכול להיות מקרי.")
+    if tbl.empty:
+        empty(f"אין פתיחה ששוחקה לפחות {C.MIN_GROUP_GAMES} פעמים בסינון הנוכחי.")
+        return
+    for c in colors:
+        t = tbl[tbl.color == c]
+        if t.empty:
+            continue
+        sure = t[t.conf != "low"]
+        weak = non_overlapping(sure[sure["diff"] < 0].sort_values("diff").itertuples(), 3)
+        strong = non_overlapping(sure[sure["diff"] > 0].sort_values("diff", ascending=False).itertuples(), 3)
+        with st.container(border=True, key=f"card_weak_{c}"):
+            md(f'<div class="card-h">{chip(c)}<span class="t" style="font-size:1.2rem">{WITH_COLOR[c]}</span>'
+               f'<span class="muted small">ממוצע {pct(t.base.iat[0])} ב‑{int((fdf.color == c).sum()):,} משחקים</span></div>')
+            a, b = st.columns(2, gap="large")
+            with a:
+                md('<div class="wtitle red">▼ חולשות</div>' + ("".join(weak_item(r, "red") for r in weak) or
+                   '<div class="note">אין חולשה מובהקת – כל הפתיחות קרובות לממוצע או מבוססות על מעט משחקים.</div>'))
+            with b:
+                md('<div class="wtitle green">▲ חוזקות</div>' + ("".join(weak_item(r, "green") for r in strong) or
+                   '<div class="note">אין פתיחה שבולטת לטובה באופן מובהק.</div>'))
+            md(f'<div class="note" style="margin-top:14px"><b>כל הפתיחות ב{COLORS[c]}, מהחלשה לחזקה</b> · '
+               'צבע חזק = ודאות גבוהה, חיוור = ייתכן מקרי. כל שורה כוללת גם את ההמשכים שלה.</div>')
+            st.altair_chart(weak_chart(t), width="stretch")
+            names = {r.key: f"{r.opening} · {r.line} ({r.diff * 100:+.0f}%)" for r in t.sort_values("diff").itertuples()}
+            st.selectbox("לפרטים ולטעויות בפתיחה", list(names), format_func=names.get, index=None,
+                         placeholder="בחרו פתיחה כדי לפתוח אותה במסך הפתיחות", key=f"wk_{c}",
+                         on_change=open_selected, args=(f"wk_{c}",))
+
+
+{"overview": page_overview, "weak": page_weak, "openings": page_openings, "mistakes": page_mistakes,
+ "practice": page_practice}[page]()

@@ -8,7 +8,15 @@ DATA.mkdir(exist_ok=True)
 
 USER = "yairklo"
 MAX_GAMES = 1000
-GAMES_FILE = DATA / "games.ndjson"
+GAMES_FILE = DATA / "games.ndjson"          # default player (kept where it always was)
+(DATA / "games").mkdir(exist_ok=True)
+
+
+def games_file(user: str = USER) -> Path:
+    """Downloaded games of a player: the default player's file, or data/games/<user>.ndjson."""
+    return GAMES_FILE if user.lower() == USER.lower() else DATA / "games" / f"{user.lower()}.ndjson"
+
+
 DB_FILE = DATA / "cache.sqlite"
 
 _exe = ROOT / "engine" / "stockfish" / "stockfish-windows-x86-64-universal.exe"
