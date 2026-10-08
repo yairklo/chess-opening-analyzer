@@ -13,3 +13,4 @@ toolbarMode = "viewer"
 
 [server]
 headless = true
+runOnSave = true
