@@ -1,53 +1,161 @@
-"""Opening grouping, statistics, toxic openings and problem positions."""
-from collections import Counter
+"""Opening tree, statistics, toxic openings and problem positions.
+
+Everything except loading is recomputed for the current filter (colour / speed), so thresholds such as
+MIN_GROUP_GAMES always apply to the games actually shown.
+"""
+from collections import Counter, defaultdict
 
 import chess
+import chess.pgn
 import pandas as pd
 
 from . import config as C
 from .analyze import db, fen_key
-from .explorer import lookup
+
+ERR_COLS = ["fen_before", "played", "played_san", "best", "eval_before", "eval_after", "win_before", "win_after", "drop"]
 
 
-def load_results() -> pd.DataFrame:
-    df = pd.read_sql("select * from game_results", db())
-    df["first_error_move"] = (df["first_error_ply"] + 1) // 2   # own move number
-    df = assign_groups(df)
-    # An "error" inside the group's own shared line is a deliberate repertoire choice (e.g. a gambit),
-    # so it does not count towards the early-error test used for toxic openings.
-    df["early_error"] = (df["first_error_move"] <= C.EARLY_ERROR_MOVE) & (df["first_error_ply"] > df["group_plies"])
-    return df
+def load_results():
+    """(games, errors): one row per analysed game, one row per error of the user in the analysed plies."""
+    con = db()
+    games = pd.read_sql("select * from game_results", con)
+    errors = pd.read_sql("select * from errors", con).merge(games[["id", "color"]], on="id")
+    errors["key"] = errors.fen_before.map(lambda f: " ".join(f.split()[:4]))
+    return games, errors
 
 
-def assign_groups(df: pd.DataFrame) -> pd.DataFrame:
-    """Group by move sequence up to the divergence point: the deepest prefix (<= LINE_MAX_PLIES)
-    still shared by >= MIN_GROUP_GAMES games of the same colour."""
-    df = df.copy()
-    df["group"] = ""
-    df["group_plies"] = 0
-    for color, sub in df.groupby("color"):
-        seqs = {i: l.split() for i, l in sub["line"].items()}
+# ---------------------------------------------------------------- opening tree
+def build_tree(games: pd.DataFrame) -> dict:
+    """Per colour: (kept prefixes, prefix counts). A prefix (<= LINE_MAX_PLIES plies) is a node when
+    >= MIN_GROUP_GAMES games share it; a node with a single child is dropped unless it holds at least
+    MIN_GROUP_GAMES games of its own beyond that child (otherwise it would only repeat the child; this applies
+    to first moves too, so 1.e4 disappears when every 1.e4 game continued 1...e5)."""
+    tree = {}
+    for color, sub in games.groupby("color"):
         cnt = Counter()
-        for s in seqs.values():
+        for line in sub.line:
+            s = line.split()
             for k in range(1, len(s) + 1):
                 cnt[tuple(s[:k])] += 1
-        for i, s in seqs.items():
-            best = 0
-            for k in range(1, len(s) + 1):
-                if cnt[tuple(s[:k])] >= C.MIN_GROUP_GAMES:
-                    best = k
-                else:
-                    break
-            df.loc[i, "group"] = " ".join(s[:best])
-            df.loc[i, "group_plies"] = best
-    return df
+        cand = {p for p, n in cnt.items() if n >= C.MIN_GROUP_GAMES}
+        children = defaultdict(list)
+        for p in cand:
+            if len(p) > 1:
+                children[p[:-1]].append(p)
+        keep = {p for p in cand
+                if len(children[p]) != 1 or cnt[p] - cnt[children[p][0]] >= C.MIN_GROUP_GAMES}
+        tree[color] = (keep, cnt)
+    return tree
 
 
+def prepare(games: pd.DataFrame, errors: pd.DataFrame):
+    """Assign every game to its deepest tree node and pick its first error *after* that node's moves:
+    an "error" inside a line shared by many games is a deliberate repertoire choice (e.g. a gambit).
+    Returns (games with first-error columns, errors after the group line, tree)."""
+    tree = build_tree(games)
+    g = games.copy()
+    groups = []
+    for color, line in zip(g.color, g.line):
+        keep = tree[color][0]
+        s = tuple(line.split())
+        groups.append(max((s[:k] for k in range(1, len(s) + 1) if s[:k] in keep), key=len, default=()))
+    g["group"] = [" ".join(p) for p in groups]
+    g["group_plies"] = [len(p) for p in groups]
+    e = errors[errors.id.isin(g.id)].merge(g[["id", "group_plies"]], on="id")
+    rel = e[e.ply > e.group_plies].drop(columns="group_plies")
+    first = rel.sort_values("ply").drop_duplicates("id").set_index("id")
+    g = g.join(first[ERR_COLS + ["ply"]].rename(columns={"ply": "first_error_ply"}), on="id")
+    g["first_error_move"] = (g.first_error_ply + 1) // 2
+    g["early_error"] = g.first_error_move <= C.EARLY_ERROR_MOVE
+    return g, rel, tree
+
+
+def node_name(openings: pd.Series) -> tuple:
+    """(name, exact): the Lichess name when most games agree on it, else the family (part before ':'),
+    else the two main families."""
+    top = openings.value_counts(normalize=True)
+    if top.iat[0] >= 0.6:
+        return top.index[0], True
+    fam = openings.str.split(":").str[0].value_counts(normalize=True)
+    if fam.iat[0] >= 0.6:
+        return fam.index[0], False
+    return " / ".join(fam.index[:2]) + (" / …" if len(fam) > 2 else ""), False
+
+
+def opening_table(g: pd.DataFrame, errors: pd.DataFrame, tree: dict) -> pd.DataFrame:
+    """One row per tree node (sums include all deeper nodes), in tree order (children by games)."""
+    rows = []
+    for color, sub in g.groupby("color"):
+        keep, _ = tree[color]
+        base = sub.score.mean()
+        seqs = sub.line.str.split()
+        ce = errors[errors.id.isin(sub.id)]
+        for p in keep:
+            s = sub[seqs.map(lambda x: tuple(x[:len(p)]) == p)]
+            n = len(s)
+            # errors after this node's own moves; first one per game
+            fe = ce[ce.id.isin(s.id) & (ce.ply > len(p))].sort_values("ply").drop_duplicates("id")
+            early = ((fe.ply + 1) // 2 <= C.EARLY_ERROR_MOVE).sum() / n
+            top_label, top_n = "", 0
+            if len(fe):
+                vc = (fe.key + "|" + fe.played_san).value_counts()
+                top_n = int(vc.iat[0])
+                r = fe[(fe.key + "|" + fe.played_san) == vc.index[0]].iloc[0]
+                top_label = move_label(int(r.ply), r.played_san)
+            score = s.score.mean()
+            name, exact = node_name(s.opening)
+            parent = next((p[:k] for k in range(len(p) - 1, 0, -1) if p[:k] in keep), None)
+            rows.append(dict(
+                color=color, group=" ".join(p), plies=len(p), parent=" ".join(parent) if parent else "",
+                line=pretty_line(" ".join(p)), games=n, base=base,
+                win=(s.result == "win").mean(), draw=(s.result == "draw").mean(), loss=(s.result == "loss").mean(),
+                score=score, cost=max(0.0, n * (base - score)), avg_first_error_move=((fe.ply + 1) // 2).mean(),
+                early_error_share=early, opening=name, eco=s.eco.mode().iat[0] if exact else "",
+                top_error=top_label, top_error_count=top_n, top_error_share=top_n / n,
+                toxic=bool(score < base - C.TOXIC_MARGIN and early >= C.EARLY_ERROR_SHARE
+                           and top_n >= C.MIN_PROBLEM_GAMES)))
+    t = pd.DataFrame(rows)
+    if t.empty:
+        return t
+    t["key"] = t.color + "|" + t.group
+    # depth-first order, children sorted by number of games
+    kids = defaultdict(list)
+    for r in t.itertuples():
+        kids[(r.color, r.parent)].append(r)
+    order, depth = {}, {}
+
+    def walk(color, parent, d):
+        for r in sorted(kids[(color, parent)], key=lambda r: -r.games):
+            order[r.key], depth[r.key] = len(order), d
+            walk(color, r.group, d + 1)
+
+    for color in ("white", "black"):
+        walk(color, "", 0)
+    t["order"], t["depth"] = t.key.map(order), t.key.map(depth)
+    return t.sort_values("order").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------- labels
 def pretty_line(line: str) -> str:
     out, toks = [], line.split()
     for i, t in enumerate(toks):
         out.append(f"{i // 2 + 1}.{t}" if i % 2 == 0 else (t if out else f"{i // 2 + 1}...{t}"))
     return " ".join(out) or "(start)"
+
+
+def move_label(ply: int, san: str) -> str:
+    """'9...Qa5' style label for a 1-based ply."""
+    return f"{(ply + 1) // 2}{'.' if ply % 2 else '...'}{san}"
+
+
+def san_of(fen: str, uci: str):
+    if not uci:
+        return None
+    b = chess.Board(fen)
+    try:
+        return b.san(chess.Move.from_uci(uci))
+    except ValueError:
+        return uci
 
 
 def overall(df):
@@ -57,41 +165,7 @@ def overall(df):
                 games_with_error=int(df.first_error_ply.notna().sum()))
 
 
-def opening_table(df: pd.DataFrame, base_score: float = None) -> pd.DataFrame:
-    """One row per (color, group) with >= MIN_GROUP_GAMES games."""
-    if df.empty:
-        return pd.DataFrame()
-    base = df.score.mean() if base_score is None else base_score
-    rows = []
-    for (color, grp), s in df.groupby(["color", "group"]):
-        n = len(s)
-        if n < C.MIN_GROUP_GAMES or not grp:
-            continue
-        early_share = s.early_error.mean()
-        score = s.score.mean()
-        top_err = top_error(s)
-        rows.append(dict(
-            color=color, line=pretty_line(grp), group=grp, games=n,
-            win=(s.result == "win").mean(), draw=(s.result == "draw").mean(), loss=(s.result == "loss").mean(),
-            score=score, avg_first_error_move=s.first_error_move.mean(), early_error_share=early_share,
-            eco=s.eco.mode().iat[0], opening=s.opening.mode().iat[0],
-            top_error=top_err[0], top_error_share=top_err[1],
-            toxic=bool(score < base - C.TOXIC_MARGIN and early_share >= C.EARLY_ERROR_SHARE)))
-    return pd.DataFrame(rows).sort_values(["color", "score"]).reset_index(drop=True)
-
-
-def top_error(s: pd.DataFrame):
-    """Most common first error in a set of games: (label, share of all games in the set)."""
-    e = s[s.first_error_ply.notna() & (s.first_error_ply > s.group_plies)]  # ignore the line's own (gambit) moves
-    if e.empty:
-        return "", 0.0
-    keys = e.fen_before.map(lambda f: " ".join(f.split()[:4])) + "|" + e.played_san
-    k, c = keys.value_counts().index[0], keys.value_counts().iat[0]
-    ply = int(e.first_error_ply[keys == k].iat[0])
-    mv = e.played_san[keys == k].iat[0]
-    return f"{(ply + 1) // 2}{'.' if ply % 2 else '...'}{mv}", c / len(s)
-
-
+# ---------------------------------------------------------------- problem positions
 def occurrences(df: pd.DataFrame) -> pd.DataFrame:
     """Every position in which the user was to move (within the analysed plies) and the move played."""
     rows = []
@@ -109,7 +183,8 @@ def occurrences(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def learning(occ: pd.DataFrame, color: str, key: str, played: str) -> dict:
-    """How often the mistake was repeated each time the position was reached, and whether it was fixed.
+    """How often the mistake was repeated each time the position was reached, whether it was fixed,
+    and which move the user usually plays there.
     status: few (not enough visits) / learned / repeating (last visit was the mistake) / improving."""
     o = occ[(occ.color == color) & (occ.key == key)].sort_values("created")
     n = len(o)
@@ -126,56 +201,69 @@ def learning(occ: pd.DataFrame, color: str, key: str, played: str) -> dict:
         status = "repeating"
     else:
         status = "improving"
+    moves = o.san.value_counts()
     return dict(reached=n, mistakes=m, rate=m / n if n else 0.0, recent_rate=float(recent.mean()) if n else 0.0,
-                since_last=since, status=status,
+                since_last=since, status=status, moves=moves.to_dict(),
+                usual=moves.index[0] if n else played, usual_n=int(moves.iat[0]) if n else 0,
                 last_mistake=pd.to_datetime(o.created.iat[last_idx], unit="ms").strftime("%Y-%m-%d") if last_idx >= 0 else "")
-
-
-def san_of(fen: str, uci: str):
-    if not uci:
-        return None
-    b = chess.Board(fen)
-    try:
-        return b.san(chess.Move.from_uci(uci))
-    except ValueError:
-        return uci
 
 
 SORTS = {"count": lambda r: (-r["count"], -r["total_drop"]),
          "avg_drop": lambda r: (-r["avg_drop"], -r["count"]),
          "total_drop": lambda r: (-r["total_drop"], -r["count"]),
-         "default": lambda r: (r["count"] < 2, -r["total_drop"])}  # recurring positions first
+         "default": lambda r: (r["count"] < C.MIN_PROBLEM_GAMES, -r["total_drop"])}  # recurring positions first
 
 
-def problem_positions(df: pd.DataFrame, color: str, top: int = C.TOP_POSITIONS, with_explorer=True, sort="default", base=None, occ=None):
-    """Positions where the first error happens most costly (total cp lost), per colour."""
-    e = df[(df.color == color) & df.first_error_ply.notna()].copy()
+def problem_positions(g: pd.DataFrame, rel: pd.DataFrame, occ: pd.DataFrame, color: str,
+                      min_games: int = 1, sort="default", base=None):
+    """Errors grouped by (position, move played) for one colour. `rel` = errors after each game's group line.
+    A move played in >= GAMBIT_MIN_GAMES games that scores above the colour's average is a working choice, not a problem."""
+    sub = g[g.color == color]
+    e = rel[(rel.color == color) & rel.id.isin(sub.id)]
     if e.empty:
         return []
-    e["key"] = e.fen_before.map(lambda f: " ".join(f.split()[:4]))
+    avg = sub.score.mean() if base is None else base
+    info = sub.set_index("id")
     out = []
-    if occ is None:
-        occ = occurrences(df)
-    n_color = int((df.color == color).sum())
-    avg = df[df.color == color].score.mean() if base is None else base
     for (key, played), s in e.groupby(["key", "played_san"]):
-        # a deliberate move (e.g. a gambit) that scores above average over enough games is not a problem
-        if len(s) >= C.GAMBIT_MIN_GAMES and s.score.mean() > avg:
+        ids = list(dict.fromkeys(s.id))
+        if len(ids) < min_games:
             continue
+        score = float(info.score.reindex(ids).mean())
+        if len(ids) >= C.GAMBIT_MIN_GAMES and score > avg:
+            continue
+        r = s.iloc[0]
         best_uci = s.best.dropna().mode().iat[0] if s.best.notna().any() else None
-        fen = s.fen_before.iat[0]
-        out.append(dict(key=key, fen=fen, count=len(s), total_drop=float(s["drop"].sum()),
-                        avg_drop=float(s["drop"].mean()), played=played,
-                        played_uci=s.played.iat[0],
-                        best_uci=best_uci, best_san=san_of(fen, best_uci),
-                        ply=int(s.first_error_ply.iat[0]),
-                        line=pretty_line(" ".join(s.moves.iat[0].split()[: int(s.first_error_ply.iat[0]) - 1])),
-                        score=float(s.score.mean()), games=list(s.id),
-                        share=len(s) / n_color, **learning(occ, color, key, played)))
+        out.append(dict(key=key, fen=r.fen_before, color=color, count=len(ids), total_drop=float(s["drop"].sum()),
+                        avg_drop=float(s["drop"].mean()), win_before=float(s.win_before.mean()),
+                        win_after=float(s.win_after.mean()), played=played, played_uci=r.played,
+                        best_uci=best_uci, best_san=san_of(r.fen_before, best_uci), ply=int(r.ply),
+                        pre_moves=info.moves[r.id].split()[: int(r.ply) - 1],
+                        opening=info.opening.reindex(ids).mode().iat[0],
+                        score=score, games=ids, share=len(ids) / len(sub), **learning(occ, color, key, played)))
     out.sort(key=SORTS[sort])
-    out = out[:top]
-    if with_explorer:
-        rating = int(df[df.color == color].rating.median())
-        for r in out:
-            r["explorer"] = lookup(r["fen"], rating)
     return out
+
+
+# ---------------------------------------------------------------- export
+def study_pgn(problems) -> str:
+    """One PGN game per problem position, for import as chapters into a Lichess Study:
+    the recommended move is the main line, the move actually played is a side variation."""
+    out = []
+    for p in problems:
+        game = chess.pgn.Game()
+        game.setup(chess.Board(p["fen"]))
+        for h in ("Date", "Round", "Site"):
+            game.headers.pop(h, None)
+        game.headers["Event"] = f'{p["opening"]} - {move_label(p["ply"], p["played"])}'
+        game.headers["White"], game.headers["Black"] = ("אני", "יריב") if p["color"] == "white" else ("יריב", "אני")
+        game.headers["Orientation"] = p["color"]
+        game.comment = (f'שיחקת כאן {move_label(p["ply"], p["played"])} ב-{p["mistakes"]} מתוך {p["reached"]} '
+                        f'הפעמים שהגעת לעמדה. מה עדיף?')
+        if p["best_uci"]:
+            game.add_main_variation(chess.Move.from_uci(p["best_uci"]), comment="המסע המומלץ (Stockfish)")
+        if p["played_uci"] != p["best_uci"]:
+            game.add_variation(chess.Move.from_uci(p["played_uci"]),
+                               comment=f'הטעות: מורידה את סיכויי הניצחון ב-{p["avg_drop"]:.0f}%')
+        out.append(str(game))
+    return "\n\n".join(out) + "\n"

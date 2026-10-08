@@ -1,9 +1,11 @@
-"""Stockfish analysis of the first N plies of every game + first-error detection.
+"""Stockfish analysis of the first N plies of every game + error detection.
 
-Evaluations are cached in SQLite by FEN (table `evals`). Per-game results go to
-`game_results`; the positions of first errors to `errors`.
+Evaluations are cached in SQLite by (FEN, engine tag) in table `evals_v2`; the tag holds the engine
+version and search settings, so changing either never mixes old and new evals. Every error of the user
+in the analysed plies goes to `errors` (one row per error); per-game metadata goes to `game_results`.
 """
 import json
+import math
 import multiprocessing as mp
 import sqlite3
 import sys
@@ -16,10 +18,15 @@ import pandas as pd
 from . import config as C
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS evals(
-  fen TEXT PRIMARY KEY, cp INTEGER NOT NULL, best TEXT, depth INTEGER);
+CREATE TABLE IF NOT EXISTS evals_v2(
+  fen TEXT NOT NULL, engine TEXT NOT NULL, cp INTEGER NOT NULL, best TEXT, depth INTEGER, PRIMARY KEY(fen, engine));
 CREATE TABLE IF NOT EXISTS explorer(fen TEXT, params TEXT, json TEXT, PRIMARY KEY(fen, params));
 """
+
+
+def win_pct(cp: float) -> float:
+    """Winning chances (0-100) for the side whose POV `cp` is in; the formula Lichess uses for accuracy."""
+    return 50 + 50 * (2 / (1 + math.exp(-0.00368208 * cp)) - 1)
 
 
 def db():
@@ -58,16 +65,18 @@ def classify(g):
 # ---------------- engine ----------------
 
 _engine = None
+_tag = None
 
 
 def _init_worker():
-    global _engine
+    global _engine, _tag
     _engine = chess.engine.SimpleEngine.popen_uci(C.STOCKFISH)
-    _engine.configure({"Threads": 1, "Hash": 64})
+    _engine.configure({"Threads": 1, "Hash": C.ENGINE_HASH})
+    _tag = f"{_engine.id.get('name', '?')}|depth={C.ENGINE_DEPTH}|threads=1|hash={C.ENGINE_HASH}"
 
 
 def _eval(board, con, new):
-    """White-POV centipawns (mate -> +-10000) and best move uci, cached by FEN."""
+    """White-POV centipawns (mate -> +-10000) and best move uci, cached by (FEN, engine tag)."""
     if board.is_checkmate():
         return (-10000 if board.turn == chess.WHITE else 10000), None
     if board.is_stalemate() or board.is_insufficient_material():
@@ -75,32 +84,30 @@ def _eval(board, con, new):
     key = fen_key(board)
     if key in new:
         return new[key][0], new[key][1]
-    row = con.execute("SELECT cp,best FROM evals WHERE fen=?", (key,)).fetchone()
+    row = con.execute("SELECT cp,best FROM evals_v2 WHERE fen=? AND engine=?", (key, _tag)).fetchone()
     if row:
         return row[0], row[1]
-    info = _engine.analyse(board, chess.engine.Limit(depth=C.ENGINE_DEPTH, time=C.ENGINE_TIME))
+    info = _engine.analyse(board, chess.engine.Limit(depth=C.ENGINE_DEPTH))
     cp = info["score"].white().score(mate_score=10000)
     best = info["pv"][0].uci() if info.get("pv") else None
     new[key] = (cp, best, info.get("depth", 0))
     return cp, best
 
 
-def _clamp(x):
-    return max(-C.EVAL_CLAMP, min(C.EVAL_CLAMP, x))
-
-
 def analyze_game(g):
+    """All errors of the user in the first ANALYZE_PLIES plies (analysis does not stop at the first one,
+    so an intentional gambit move does not hide the real mistakes that follow it)."""
     color, _ = classify(g)
     me_white = color == "white"
     con = sqlite3.connect(C.DB_FILE, timeout=60)
-    new = {}
+    new, errors = {}, []
     board = chess.Board()
     sans = g["moves"].split()[: C.ANALYZE_PLIES]
-    res = dict(id=g["id"], color=color, first_error_ply=None, plies_analyzed=0)
+    res = dict(id=g["id"], color=color, plies_analyzed=0)
     try:
         for i, san in enumerate(sans):
-            mover_white = board.turn == chess.WHITE
-            before_cp, best = _eval(board, con, new) if mover_white == me_white else (None, None)
+            mine = (board.turn == chess.WHITE) == me_white
+            before_cp, best = _eval(board, con, new) if mine else (None, None)
             fen_before = board.fen()
             try:
                 move = board.parse_san(san)
@@ -108,21 +115,18 @@ def analyze_game(g):
                 break
             board.push(move)
             res["plies_analyzed"] = i + 1
-            if mover_white != me_white:
+            if not mine:
                 continue
             after_cp, _ = _eval(board, con, new)
             sgn = 1 if me_white else -1
             b, a = sgn * before_cp, sgn * after_cp
-            drop = _clamp(b) - _clamp(a)
-            crossed = b > C.LOSING_CP and a <= C.LOSING_CP
-            if drop >= C.ERROR_DROP_CP or crossed:
-                res.update(first_error_ply=i + 1, fen_before=fen_before, played=move.uci(),
-                           played_san=san, best=best, eval_before=b, eval_after=a,
-                           drop=drop, kind="crossed-to-losing" if crossed and drop < C.ERROR_DROP_CP else "drop")
-                break
+            wb, wa = win_pct(b), win_pct(a)
+            if wb - wa >= C.ERROR_WIN_DROP:
+                errors.append(dict(id=g["id"], ply=i + 1, fen_before=fen_before, played=move.uci(), played_san=san,
+                                   best=best, eval_before=b, eval_after=a, win_before=wb, win_after=wa, drop=wb - wa))
     finally:
         con.close()
-    return res, new
+    return res, errors, new, _tag
 
 
 def run(limit=None):
@@ -134,14 +138,15 @@ def run(limit=None):
     if limit:
         todo = todo[:limit]
     con = db()
-    results, t0 = [], time.time()
+    results, all_errors, t0 = [], [], time.time()
     ctx = mp.get_context("spawn")
     with ctx.Pool(C.WORKERS, initializer=_init_worker) as pool:
-        for k, (res, new) in enumerate(pool.imap_unordered(analyze_game, todo, chunksize=2), 1):
+        for k, (res, errs, new, tag) in enumerate(pool.imap_unordered(analyze_game, todo, chunksize=2), 1):
             results.append(res)
+            all_errors.extend(errs)
             if new:
-                con.executemany("INSERT OR REPLACE INTO evals VALUES(?,?,?,?)",
-                                [(f, v[0], v[1], v[2]) for f, v in new.items()])
+                con.executemany("INSERT OR REPLACE INTO evals_v2 VALUES(?,?,?,?,?)",
+                                [(f, tag, v[0], v[1], v[2]) for f, v in new.items()])
                 con.commit()
             if k % 25 == 0:
                 print(f"  {k}/{len(todo)} games, {time.time()-t0:.0f}s", flush=True)
@@ -163,10 +168,13 @@ def run(limit=None):
                      "created": g["createdAt"], "moves": g["moves"]})
     df = pd.DataFrame(rows)
     df.to_sql("game_results", con, if_exists="replace", index=False)
+    pd.DataFrame(all_errors, columns=["id", "ply", "fen_before", "played", "played_san", "best", "eval_before",
+                                      "eval_after", "win_before", "win_after", "drop"]
+                 ).to_sql("errors", con, if_exists="replace", index=False)
     pd.DataFrame(skipped, columns=["id", "reason"]).to_sql("skipped", con, if_exists="replace", index=False)
     con.commit()
-    print(f"Analyzed {len(df)} games, skipped {len(skipped)}; "
-          f"{con.execute('select count(*) from evals').fetchone()[0]} cached evals; {time.time()-t0:.0f}s")
+    print(f"Analyzed {len(df)} games, skipped {len(skipped)}; {len(all_errors)} errors; "
+          f"{con.execute('select count(*) from evals_v2').fetchone()[0]} cached evals; {time.time()-t0:.0f}s")
     return df
 
 
