@@ -6,7 +6,6 @@ MIN_GROUP_GAMES always apply to the games actually shown.
 from collections import Counter, defaultdict
 
 import chess
-import chess.pgn
 import pandas as pd
 
 from . import config as C
@@ -15,9 +14,9 @@ from .analyze import db, fen_key
 ERR_COLS = ["fen_before", "played", "played_san", "best", "eval_before", "eval_after", "win_before", "win_after", "drop"]
 
 
-def load_results(user: str = C.USER):
-    """(games, errors) of one player: one row per analysed game, one row per error in the analysed plies.
-    `errors` is empty until the Stockfish analysis has run for that player."""
+def load_results(user: str = C.USER, threshold: float = C.ERROR_WIN_DROP):
+    """(games, errors) of one player: one row per analysed game, one row per error (win% drop >= threshold)
+    in the analysed plies. `errors` is empty until the Stockfish analysis has run for that player."""
     con = db()
     user = user.lower()
     games = pd.read_sql("select * from game_results where user=?", con, params=(user,))
@@ -26,6 +25,7 @@ def load_results(user: str = C.USER):
     except Exception:
         errors = pd.DataFrame(columns=["id", "ply", "fen_before", "played", "played_san", "best", "eval_before",
                                        "eval_after", "win_before", "win_after", "drop"])
+    errors = errors[(errors["drop"] >= threshold) & (errors.played != errors.best)]
     errors = errors.drop(columns="user", errors="ignore").merge(games[["id", "color"]], on="id")
     errors["key"] = errors.fen_before.map(lambda f: " ".join(f.split()[:4]))
     return games, errors
@@ -241,36 +241,21 @@ def problem_positions(g: pd.DataFrame, rel: pd.DataFrame, occ: pd.DataFrame, col
             continue
         r = s.iloc[0]
         best_uci = s.best.dropna().mode().iat[0] if s.best.notna().any() else None
+        # what the opponents actually answered, and how those games ended
+        replies = defaultdict(list)
+        for i in ids:
+            mv = info.moves[i].split()
+            if len(mv) > r.ply:
+                replies[mv[int(r.ply)]].append(info.score[i])
+        replies = sorted(({"san": k, "n": len(v), "score": sum(v) / len(v)} for k, v in replies.items()),
+                         key=lambda x: -x["n"])
         out.append(dict(key=key, fen=r.fen_before, color=color, count=len(ids), total_drop=float(s["drop"].sum()),
                         avg_drop=float(s["drop"].mean()), win_before=float(s.win_before.mean()),
                         win_after=float(s.win_after.mean()), played=played, played_uci=r.played,
                         best_uci=best_uci, best_san=san_of(r.fen_before, best_uci), ply=int(r.ply),
                         pre_moves=info.moves[r.id].split()[: int(r.ply) - 1],
                         opening=info.opening.reindex(ids).mode().iat[0],
-                        score=score, games=ids, share=len(ids) / len(sub), **learning(occ, color, key, played)))
+                        score=score, games=ids, share=len(ids) / len(sub), replies=replies,
+                        cost=len(ids) * (avg - score), avg=avg, **learning(occ, color, key, played)))
     out.sort(key=SORTS[sort])
     return out
-
-
-# ---------------------------------------------------------------- export
-def study_pgn(problems) -> str:
-    """One PGN game per problem position, for import as chapters into a Lichess Study:
-    the recommended move is the main line, the move actually played is a side variation."""
-    out = []
-    for p in problems:
-        game = chess.pgn.Game()
-        game.setup(chess.Board(p["fen"]))
-        for h in ("Date", "Round", "Site"):
-            game.headers.pop(h, None)
-        game.headers["Event"] = f'{p["opening"]} - {move_label(p["ply"], p["played"])}'
-        game.headers["White"], game.headers["Black"] = ("אני", "יריב") if p["color"] == "white" else ("יריב", "אני")
-        game.headers["Orientation"] = p["color"]
-        game.comment = (f'שיחקת כאן {move_label(p["ply"], p["played"])} ב-{p["mistakes"]} מתוך {p["reached"]} '
-                        f'הפעמים שהגעת לעמדה. מה עדיף?')
-        if p["best_uci"]:
-            game.add_main_variation(chess.Move.from_uci(p["best_uci"]), comment="המסע המומלץ (Stockfish)")
-        if p["played_uci"] != p["best_uci"]:
-            game.add_variation(chess.Move.from_uci(p["played_uci"]),
-                               comment=f'הטעות: מורידה את סיכויי הניצחון ב-{p["avg_drop"]:.0f}%')
-        out.append(str(game))
-    return "\n\n".join(out) + "\n"

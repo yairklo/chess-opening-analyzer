@@ -31,13 +31,20 @@ WORKERS = max(1, min(8, (os.cpu_count() or 4) // 2))
 # --- errors ---
 # An error is a drop of >= ERROR_WIN_DROP points in the mover's winning chances (Lichess win% formula),
 # so +5 -> +4 (still winning) is not an error but +0.5 -> -0.7 is.
-ERROR_WIN_DROP = 12
+ERROR_WIN_DROP = 12            # default; adjustable in the dashboard sidebar
+ERROR_WIN_DROP_CHOICES = [8, 10, 12, 15, 20]
+ERROR_STORE_MIN = 6            # drops >= this are stored, so the threshold can change without re-running the engine
+PV_PLIES = 6                   # length of the engine lines shown on mistake cards
 
 # --- statistics ---
 MIN_GROUP_GAMES = 10        # groups smaller than this are never shown
 LINE_MAX_PLIES = 12         # deepest line used when grouping openings
 EARLY_ERROR_MOVE = 8        # "early" = first error on own move <= 8
 EARLY_ERROR_SHARE = 0.30    # "recurring" = >=30% of group's games have an early first error
+
+# confidence that an opening really differs from the player's other games in that colour (two-proportion z)
+CONF_HIGH_Z, CONF_HIGH_GAMES = 2.5, 20
+CONF_MID_Z, CONF_MID_GAMES = 2.0, 15
 
 TOXIC_MARGIN = 0.05         # toxic also needs score >= 5 points below the same colour's average ...
                             # ... and the same exact error (position + move) in >= MIN_PROBLEM_GAMES games

@@ -13,6 +13,7 @@ import argparse
 import json
 import math
 import multiprocessing as mp
+import os
 import sqlite3
 import time
 
@@ -25,8 +26,14 @@ from . import config as C
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS evals_v2(
   fen TEXT NOT NULL, engine TEXT NOT NULL, cp INTEGER NOT NULL, best TEXT, depth INTEGER, PRIMARY KEY(fen, engine));
+CREATE TABLE IF NOT EXISTS pv_v1(
+  fen TEXT NOT NULL, engine TEXT NOT NULL, pv TEXT NOT NULL, cp INTEGER, PRIMARY KEY(fen, engine));
 CREATE TABLE IF NOT EXISTS explorer(fen TEXT, params TEXT, json TEXT, PRIMARY KEY(fen, params));
 """
+
+
+def engine_tag(engine) -> str:
+    return f"{engine.id.get('name', '?')}|depth={C.ENGINE_DEPTH}|threads=1|hash={C.ENGINE_HASH}"
 
 
 def win_pct(cp: float) -> float:
@@ -94,7 +101,7 @@ def _init_worker():
     global _engine, _tag
     _engine = chess.engine.SimpleEngine.popen_uci(C.STOCKFISH)
     _engine.configure({"Threads": 1, "Hash": C.ENGINE_HASH})
-    _tag = f"{_engine.id.get('name', '?')}|depth={C.ENGINE_DEPTH}|threads=1|hash={C.ENGINE_HASH}"
+    _tag = engine_tag(_engine)
 
 
 def _eval(board, con, new):
@@ -144,7 +151,9 @@ def analyze_game(job):
             sgn = 1 if me_white else -1
             b, a = sgn * before_cp, sgn * after_cp
             wb, wa = win_pct(b), win_pct(a)
-            if wb - wa >= C.ERROR_WIN_DROP:
+            # store smaller drops too (the dashboard applies the threshold); the engine's own move is never an error,
+            # even when two independent searches disagree a little
+            if wb - wa >= C.ERROR_STORE_MIN and move.uci() != best:
                 errors.append(dict(id=g["id"], ply=i + 1, fen_before=fen_before, played=move.uci(), played_san=san,
                                    best=best, eval_before=b, eval_after=a, win_before=wb, win_after=wa, drop=wb - wa))
     finally:
@@ -208,6 +217,7 @@ def run(user=C.USER, limit=None):
         todo = todo[:limit]
     con = db()
     all_errors, t0 = [], time.time()
+    print(f"PID {os.getpid()}", flush=True)
     print(f"PROGRESS 0/{len(todo)}", flush=True)
     ctx = mp.get_context("spawn")
     with ctx.Pool(C.WORKERS, initializer=_init_worker) as pool:
