@@ -25,8 +25,8 @@ def fetch(user: str = C.USER, refresh: bool = False, max_games: int = C.MAX_GAME
         print(f"{out} exists ({n} games); skipping download (use --refresh).")
         return n
     headers = {"Accept": "application/x-ndjson", "User-Agent": "yairklo-opening-analyzer"}
-    if C.LICHESS_TOKEN:
-        headers["Authorization"] = f"Bearer {C.LICHESS_TOKEN}"
+    if C.lichess_token():
+        headers["Authorization"] = f"Bearer {C.lichess_token()}"
     params = dict(max=max_games, opening="true", evals="false", clocks="false")
     url = f"https://lichess.org/api/games/user/{user}"
     while True:

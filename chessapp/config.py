@@ -53,7 +53,18 @@ TOXIC_MARGIN = 0.05         # toxic also needs score >= 5 points below the same 
 GAMBIT_MIN_GAMES = 5        # a played move with >= 5 games and above-average score is a working choice, not a problem
 TOP_POSITIONS = 5
 MIN_PROBLEM_GAMES = 3       # a "recurring" mistake = same move in the same position in >= 3 games
-LICHESS_TOKEN = os.environ.get("LICHESS_TOKEN")
+TOKEN_FILE = DATA / "lichess_token.txt"   # data/ is git-ignored, so the token never reaches the repository
+
+
+def lichess_token():
+    """Personal Lichess token: the LICHESS_TOKEN environment variable, else data/lichess_token.txt.
+    Read on every call, so saving the file takes effect without restarting the dashboard."""
+    tok = os.environ.get("LICHESS_TOKEN")
+    if not tok and TOKEN_FILE.exists():
+        tok = TOKEN_FILE.read_text(encoding="utf-8-sig").strip()
+        tok = tok.split("=", 1)[1] if tok.upper().startswith("LICHESS_TOKEN=") else tok  # also accept KEY=value
+        tok = tok.strip().strip('"').strip("'")
+    return tok or None
 EXPLORER_URL = "https://explorer.lichess.ovh/lichess"
 
 # --- learning over time ---

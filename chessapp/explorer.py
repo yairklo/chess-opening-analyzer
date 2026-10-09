@@ -1,6 +1,6 @@
 """Lichess Opening Explorer lookups (cached in SQLite, only for the problem positions).
 
-The explorer API currently requires an OAuth token: set LICHESS_TOKEN (a personal token, no scopes needed).
+The explorer API currently requires an OAuth token: put a personal token (no scopes needed) in data/lichess_token.txt or the LICHESS_TOKEN environment variable.
 Without a token, or when the request fails, `explore` returns (None, reason) and the dashboard says why.
 """
 import json
@@ -22,8 +22,8 @@ def similar_ratings(rating: int):
 
 def explore(fen: str, rating: int, speeds: str = "blitz,rapid"):
     """(explorer data, None) or (None, reason in Hebrew). Successful answers are cached; failures are not."""
-    if not C.LICHESS_TOKEN:
-        return None, "לא הוגדר LICHESS_TOKEN"
+    if not C.lichess_token():
+        return None, "לא הוגדר טוקן של Lichess"
     ratings = similar_ratings(rating)
     params = f"{ratings}|{speeds}"
     con = db()
@@ -32,7 +32,7 @@ def explore(fen: str, rating: int, speeds: str = "blitz,rapid"):
         return json.loads(row[0]), None
     try:
         r = requests.get(C.EXPLORER_URL, params={"fen": fen, "ratings": ratings, "speeds": speeds, "moves": 6},
-                         headers={"Authorization": f"Bearer {C.LICHESS_TOKEN}", "User-Agent": "yairklo-opening-analyzer"},
+                         headers={"Authorization": f"Bearer {C.lichess_token()}", "User-Agent": "yairklo-opening-analyzer"},
                          timeout=15)
     except requests.RequestException as e:
         return None, f"אין חיבור ל‑Lichess ({type(e).__name__})"

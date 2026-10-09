@@ -900,7 +900,7 @@ def mistake_card(p, n):
                f'<div class="note" style="margin-top:10px">{usual_html(p)}</div>'
                f'<div class="note">{why}</div>'
                f'<div class="note" style="margin-top:10px">המשחקים:</div>{game_links(p["games"], p["color"], p["ply"])}')
-            if C.LICHESS_TOKEN:
+            if C.lichess_token():
                 rating = int(fdf[fdf.color == p["color"]].rating.median())
                 ex, reason = explorer(p["fen"], rating)
                 if ex:
@@ -965,8 +965,8 @@ def page_mistakes():
         with st.spinner("מחשב קווים במנוע לכל עמדה..."):
             st.session_state[pgn_key] = study_pgn(export)
         st.rerun()
-    if not C.LICHESS_TOKEN:
-        st.caption("כדי לראות גם מה משחקים שחקנים ברמה דומה בכל עמדה (Lichess Opening Explorer) צריך להגדיר LICHESS_TOKEN: "
+    if not C.lichess_token():
+        st.caption("כדי לראות גם מה משחקים שחקנים ברמה דומה בכל עמדה (Lichess Opening Explorer) צריך טוקן אישי של Lichess בקובץ data/lichess_token.txt: "
                    "ה‑API של ה‑Explorer דורש כיום טוקן אישי. ראו README.")
     sig = f"{scope}|{sort}|{hide}|{colors}"
     if st.session_state.get("mk_sig") != sig:
