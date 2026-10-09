@@ -89,6 +89,25 @@ def node_name(openings: pd.Series) -> tuple:
     return " / ".join(fam.index[:2]) + (" / …" if len(fam) > 2 else ""), False
 
 
+def confidence(z: float, n: int) -> str:
+    """How sure we are that an opening really differs from the player's other games in that colour.
+    Strict thresholds, because dozens of openings are tested at once."""
+    if abs(z) >= C.CONF_HIGH_Z and n >= C.CONF_HIGH_GAMES:
+        return "high"
+    if abs(z) >= C.CONF_MID_Z and n >= C.CONF_MID_GAMES:
+        return "mid"
+    return "low"
+
+
+def gap_z(score, n, base, n_col):
+    """Two-proportion z of the opening against the *rest* of the colour's games (not an average containing it)."""
+    rest = n_col - n
+    if rest <= 0 or base in (0, 1):
+        return 0.0
+    rest_score = (base * n_col - score * n) / rest
+    return (score - rest_score) / (base * (1 - base) * (1 / n + 1 / rest)) ** .5
+
+
 def opening_table(g: pd.DataFrame, errors: pd.DataFrame, tree: dict) -> pd.DataFrame:
     """One row per tree node (sums include all deeper nodes), in tree order (children by games)."""
     rows = []
@@ -110,6 +129,8 @@ def opening_table(g: pd.DataFrame, errors: pd.DataFrame, tree: dict) -> pd.DataF
                 r = fe[(fe.key + "|" + fe.played_san) == vc.index[0]].iloc[0]
                 top_label = move_label(int(r.ply), r.played_san)
             score = s.score.mean()
+            z = gap_z(score, n, base, len(sub))
+            conf = confidence(z, n)
             name, exact = node_name(s.opening)
             parent = next((p[:k] for k in range(len(p) - 1, 0, -1) if p[:k] in keep), None)
             rows.append(dict(
@@ -118,8 +139,9 @@ def opening_table(g: pd.DataFrame, errors: pd.DataFrame, tree: dict) -> pd.DataF
                 win=(s.result == "win").mean(), draw=(s.result == "draw").mean(), loss=(s.result == "loss").mean(),
                 score=score, cost=max(0.0, n * (base - score)), avg_first_error_move=((fe.ply + 1) // 2).mean(),
                 early_error_share=early, opening=name, eco=s.eco.mode().iat[0] if exact else "",
-                top_error=top_label, top_error_count=top_n, top_error_share=top_n / n,
-                toxic=bool(score < base - C.TOXIC_MARGIN and early >= C.EARLY_ERROR_SHARE
+                top_error=top_label, top_error_count=top_n, top_error_share=top_n / n, z=z, conf=conf,
+                # problematic = clearly below the colour average (not plausibly chance), early errors, one repeating error
+                toxic=bool(score < base - C.TOXIC_MARGIN and conf != "low" and early >= C.EARLY_ERROR_SHARE
                            and top_n >= C.MIN_PROBLEM_GAMES)))
     t = pd.DataFrame(rows)
     if t.empty:
@@ -209,9 +231,10 @@ def learning(occ: pd.DataFrame, color: str, key: str, played: str) -> dict:
     else:
         status = "improving"
     moves = o.san.value_counts()
+    tie = len(moves) > 1 and moves.iat[0] == moves.iat[1]  # no single usual move
     return dict(reached=n, mistakes=m, rate=m / n if n else 0.0, recent_rate=float(recent.mean()) if n else 0.0,
                 since_last=since, status=status, moves=moves.to_dict(),
-                usual=moves.index[0] if n else played, usual_n=int(moves.iat[0]) if n else 0,
+                usual=None if tie else (moves.index[0] if n else played), usual_n=int(moves.iat[0]) if n else 0,
                 last_mistake=pd.to_datetime(o.created.iat[last_idx], unit="ms").strftime("%Y-%m-%d") if last_idx >= 0 else "")
 
 

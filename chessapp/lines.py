@@ -28,6 +28,10 @@ def _get_engine():
     return _engine
 
 
+PV_STORE = 24        # plies of each principal variation kept in the cache
+SETTLE_MAX = 16      # never follow a line further than this when waiting for captures to finish
+
+
 def pv(board: chess.Board):
     """(principal variation as uci list, white-POV centipawns) at the standard depth."""
     if board.is_game_over():
@@ -35,12 +39,12 @@ def pv(board: chess.Board):
     con = db()
     with _lock:
         eng = _get_engine()
-        tag = engine_tag(eng)
+        tag = engine_tag(eng) + f"|pv{PV_STORE}"
         row = con.execute("SELECT pv, cp FROM pv_v1 WHERE fen=? AND engine=?", (fen_key(board), tag)).fetchone()
         if row:
             return row[0].split(), row[1]
         info = eng.analyse(board, chess.engine.Limit(depth=C.ENGINE_DEPTH))
-    moves = [m.uci() for m in info.get("pv", [])][: C.PV_PLIES]
+    moves = [m.uci() for m in info.get("pv", [])][:PV_STORE]
     cp = info["score"].white().score(mate_score=10000)
     con.execute("INSERT OR REPLACE INTO pv_v1 VALUES(?,?,?,?)", (fen_key(board), tag, " ".join(moves), cp))
     con.commit()
@@ -61,6 +65,30 @@ def play_line(board, ucis):
             break
         sans.append(b.san(m))
         b.push(m)
+    return sans, b
+
+
+def settled_line(board, ucis):
+    """Follow an engine line for at least PV_PLIES plies and then until it is quiet: nobody is in check and the
+    next move is not a capture or a check. If the line runs out in the middle of an exchange, ask the engine to
+    continue from there. Counting material at a quiet point avoids "a knight is lost" one ply before the recapture."""
+    b, sans, queue, last_capture = board.copy(), [], list(ucis), False
+    while len(sans) < SETTLE_MAX:
+        if not queue:
+            if len(sans) >= C.PV_PLIES and not b.is_check() and not last_capture:
+                break
+            queue = pv(b)[0]
+            if not queue:
+                break
+        m = chess.Move.from_uci(queue[0])
+        if m not in b.legal_moves:
+            break
+        if len(sans) >= C.PV_PLIES and not b.is_check() and not b.is_capture(m) and not b.gives_check(m):
+            break
+        sans.append(b.san(m))
+        last_capture = b.is_capture(m)
+        b.push(m)
+        queue.pop(0)
     return sans, b
 
 
@@ -88,6 +116,11 @@ def trade(start, end, me):
         k = min(lost[pt], won[pt])
         lost[pt] -= k
         won[pt] -= k
+    # a knight for a bishop is an even trade: cancel minor pieces across the two types
+    for mine, theirs in ((chess.KNIGHT, chess.BISHOP), (chess.BISHOP, chess.KNIGHT)):
+        k = min(lost[mine], won[theirs])
+        lost[mine] -= k
+        won[theirs] -= k
     return {k: v for k, v in lost.items() if v > 0}, {k: v for k, v in won.items() if v > 0}
 
 
@@ -102,8 +135,8 @@ def explain(p):
     after = before.copy()
     after.push(chess.Move.from_uci(p["played_uci"]))
     punish_ucis, cp_after = pv(after)
-    punish, end = play_line(after, punish_ucis)
-    better, end_best = play_line(before, pv(before)[0]) if p["best_uci"] else ([], before)
+    punish, end = settled_line(after, punish_ucis)
+    better, end_best = settled_line(before, pv(before)[0]) if p["best_uci"] else ([], before)
     lost = balance(before, me) - balance(end, me)
     gain = balance(end_best, me) - balance(before, me)
     mine_cp = cp_after if me == chess.WHITE else -cp_after
@@ -111,11 +144,15 @@ def explain(p):
         why = "אחרי המסע הזה ליריב יש מט כפוי."
     elif lost >= 1:
         gave, got = trade(before, end, me)
-        why = (f"בקו של המנוע ({punish[0] if punish else ''} ואילך) הולכים {pieces_text(gave)}"
+        why = (f"בקו של המנוע ({punish[0] if punish else ''} ואילך, עד שנגמרות ההכאות) הולכים {pieces_text(gave)}"
                + (f" תמורת {pieces_text(got)}" if got else " בלי פיצוי") + ".")
-    elif gain >= 1:
+    elif gain >= 1 and mine_cp > -150:
+        # "missed chance" only when the move played is not itself losing; otherwise it is simply a bad move
         got, _ = trade(before, end_best, not me)
-        why = f"החמצה: המסע המומלץ זוכה ב{pieces_text(got) or 'חומר'}, והמסע ששוחק מפספס את זה."
+        why = f"החמצה: המסע המומלץ זוכה ב{pieces_text(got) or 'חומר'}, והמסע ששוחק מפספס את זה (אבל לא מפסיד)."
+    elif mine_cp <= -150:
+        why = (f"בלי הפסד חומר מיידי, אבל לפי המנוע העמדה נהיית מפסידה: סיכויי הניצחון יורדים מ‑{p['win_before']:.0f}% "
+               f"ל‑{p['win_after']:.0f}%.")
     else:
         why = (f"אין הפסד חומר מיידי, אבל העמדה נהיית קשה: סיכויי הניצחון יורדים מ‑{p['win_before']:.0f}% "
                f"ל‑{p['win_after']:.0f}% (מבנה, פיתוח או ביטחון המלך).")
