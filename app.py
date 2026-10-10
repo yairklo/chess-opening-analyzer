@@ -264,7 +264,7 @@ def engine_panel(user, has_errors):
             st.error("הניתוח נכשל. אפשר לנסות שוב.")
         n = stamp[0] if stamp else 0
         st.caption(f"הטעויות בפתיחה עוד לא נותחו. ניתוח {n:,} משחקים לוקח בערך {max(1, round(n * 0.65 / 60))} דקות.")
-        st.button("נתח טעויות ב־Stockfish", on_click=start_analysis, args=(user,), icon=":material/memory:",
+        st.button(ltr_label("נתח טעויות ב־", "Stockfish"), on_click=start_analysis, args=(user,), icon=":material/memory:",
                   width="stretch", key="run_engine")
 
 
@@ -299,6 +299,11 @@ def explorer(fen, rating):
 # ---------------------------------------------------------------- html helpers
 def esc(t):
     return html.escape(str(t))
+
+
+def ltr_label(before, name, after=""):
+    """Widget label (plain text, no HTML) with an English name that keeps its place inside Hebrew text."""
+    return f"⁧{before}⁦{name}⁩{after}⁩"
 
 
 def en(t):
@@ -457,11 +462,11 @@ with st.sidebar:
     md('<div class="brand">♞ ניתוח <span>פתיחות</span></div>')
     user = st.selectbox("שחקן", players, key="user",
                         format_func=lambda u: f"{u} (אני)" if u == C.USER.lower() else u)
-    with st.popover("הוספת שחקן מ־Lichess", icon=":material/person_add:", width="stretch"):
+    with st.popover(ltr_label("הוספת שחקן מ־", "Lichess"), icon=":material/person_add:", width="stretch"):
         with st.form("add_player", border=False, clear_on_submit=True):
-            name = st.text_input("שם משתמש ב־Lichess", placeholder="DrNykterstein", key="add_name")
+            name = st.text_input(ltr_label("שם משתמש ב־", "Lichess"), placeholder="DrNykterstein", key="add_name")
             n_games = st.segmented_control("כמה משחקים אחרונים", [200, 500, 1000], default=500)
-            run_engine = st.checkbox("לנתח מיד גם את הטעויות ב־Stockfish (ברקע)", True)
+            run_engine = st.checkbox(ltr_label("לנתח מיד גם את הטעויות ב־", "Stockfish", " (ברקע)"), True)
             st.caption("ההורדה לוקחת בערך דקה לכל 500 משחקים, ועץ הפתיחות והחולשות מוכנים מיד אחריה. "
                        "ניתוח הטעויות לוקח עוד כ‑5 דקות לכל 500 משחקים, ואפשר להמשיך לעבוד בזמן שהוא רץ.")
             go_add = st.form_submit_button("הורד ונתח", type="primary", width="stretch")

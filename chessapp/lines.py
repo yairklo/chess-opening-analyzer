@@ -68,6 +68,20 @@ def play_line(board, ucis):
     return sans, b
 
 
+def capture_soon(board, queue, plies=4):
+    """True when one of the next `plies` moves of `queue` is a capture: a quiet move in the middle of an exchange
+    (...h6 between two recaptures) is not the end of it."""
+    b = board.copy()
+    for u in queue[:plies]:
+        m = chess.Move.from_uci(u)
+        if m not in b.legal_moves:
+            return False
+        if b.is_capture(m):
+            return True
+        b.push(m)
+    return False
+
+
 def settled_line(board, ucis):
     """Follow an engine line for at least PV_PLIES plies and then until it is quiet: nobody is in check and the
     next move is not a capture or a check. If the line runs out in the middle of an exchange, ask the engine to
@@ -83,7 +97,8 @@ def settled_line(board, ucis):
         m = chess.Move.from_uci(queue[0])
         if m not in b.legal_moves:
             break
-        if len(sans) >= C.PV_PLIES and not b.is_check() and not b.is_capture(m) and not b.gives_check(m):
+        if (len(sans) >= C.PV_PLIES and not b.is_check() and not b.is_capture(m) and not b.gives_check(m)
+                and not capture_soon(b, queue)):
             break
         sans.append(b.san(m))
         last_capture = b.is_capture(m)
@@ -141,23 +156,32 @@ def explain(p):
     lost = balance(before, me) - balance(end, me)
     gain = balance(end_best, me) - balance(before, me)
     mine_cp = cp_after if me == chess.WHITE else -cp_after
+    mine_before = cp_before if me == chess.WHITE else -cp_before
+    drop = (mine_before - mine_cp) / 100
     if end.is_checkmate() or mine_cp <= -9000:
         why = "אחרי המסע הזה ליריב יש מט כפוי."
     elif lost >= 1 and mine_cp > -50:
-        # material goes, but the engine still calls the position about equal: compensation, as in a gambit
-        mine_before = cp_before if me == chess.WHITE else -cp_before
+        # material goes, but the engine still likes the position: compensation (about equal) or a smaller edge
         gave, _ = trade(before, end, me)
-        why = (f"המסע נותן {pieces_text(gave) or 'חומר'}, אבל לפי המנוע יש פיצוי והעמדה נשארת כמעט שקולה "
-               f"({mine_cp / 100:+.1f}). הבעיה היא שמסע אחר שמר על יתרון ({mine_before / 100:+.1f}).")
-    elif lost >= 1 and lost > ((cp_before if me == chess.WHITE else -cp_before) - mine_cp) / 100 + 1:
+        gave_txt = pieces_text(gave) or "חומר"
+        if mine_cp <= 50:
+            why = (f"המסע נותן {gave_txt}, אבל לפי המנוע יש פיצוי והעמדה נשארת כמעט שקולה "
+                   f"({mine_cp / 100:+.1f}). הבעיה היא שמסע אחר שמר על יתרון ({mine_before / 100:+.1f}).")
+        else:
+            why = (f"בקו של המנוע המסע גורר ויתור על {gave_txt}, ובכל זאת נשאר יתרון קטן ({mine_cp / 100:+.1f}). "
+                   f"הבעיה היא שמסע אחר שמר על יתרון גדול יותר ({mine_before / 100:+.1f}).")
+    elif lost >= 1 and lost > drop + 1:
         # the line still leaves something hanging: the material count says more than the engine's own evaluation
-        mine_before = cp_before if me == chess.WHITE else -cp_before
-        why = (f"לפי המנוע העמדה יורדת בכ‑{(mine_before - mine_cp) / 100:.1f} פיון (סיכויי הניצחון {p['win_before']:.0f}% ← "
+        why = (f"לפי המנוע העמדה יורדת בכ‑{drop:.1f} פיון (סיכויי הניצחון {p['win_before']:.0f}% ← "
                f"{p['win_after']:.0f}%), בלי הפסד חומר מובהק בסוף הקו.")
     elif lost >= 1:
         gave, got = trade(before, end, me)
         why = (f"בקו של המנוע ({punish[0] if punish else ''} ואילך, עד שנגמרות ההכאות) הולכים {pieces_text(gave)}"
                + (f" תמורת {pieces_text(got)}" if got else " בלי פיצוי") + ".")
+        if drop - lost >= 1.5:
+            # the material count understates it: structure, initiative or threats beyond the exchange
+            why += (f" וזה לא כל הסיפור: לפי המנוע ההערכה יורדת בכ‑{drop:.1f} פיון, יותר ממה שמשקף החומר "
+                    f"(סיכויי הניצחון {p['win_before']:.0f}% ← {p['win_after']:.0f}%).")
     elif gain >= 1 and mine_cp > -150:
         # "missed chance" only when the move played is not itself losing; otherwise it is simply a bad move
         got, _ = trade(before, end_best, not me)
