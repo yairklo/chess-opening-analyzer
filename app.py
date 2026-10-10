@@ -894,6 +894,55 @@ def cost_note(p):
     return f"מחיר בנקודות = כמה נקודות ירדו במשחקים האלה לעומת הממוצע: {base}."
 
 
+def line_html(sans, first_ply, cur):
+    """Numbered line with the move currently on the board highlighted (cur = number of moves played, 0 = none)."""
+    out = []
+    for i, san in enumerate(sans, 1):
+        ply = first_ply + i - 1
+        num = f'<span class="n">{(ply + 1) // 2}.</span>' if ply % 2 else (f'<span class="n">{(ply + 1) // 2}...</span>' if i == 1 else "")
+        cls = "cur" if i == cur else "dim" if i > cur else ""
+        out.append(f'<span class="u">{num}<span class="m {cls}">{esc(san)}</span></span> ')
+    return f'<div class="moves">{"".join(out)}</div>'
+
+
+def line_board(p, x):
+    """The card's board: the mistake with arrows, or the correct line / the punishment played out move by move."""
+    k = f'lb_{abs(hash((p["color"], p["key"], p["played"])))}'
+    mode = st.segmented_control("על הלוח", ["mistake", "better", "punish"], default="mistake", key=f"{k}_mode",
+                                format_func={"mistake": "הטעות", "better": "הקו הנכון", "punish": "קו העונש"}.get,
+                                label_visibility="collapsed", width="stretch")
+    before = chess.Board(p["fen"])
+    if mode not in ("better", "punish"):
+        st.image(board_svg(before, p["color"], None, [(p["played_uci"], RED), (p["best_uci"], GREEN)], size=400), width=400)
+        md(arrow_legend())
+        return
+    if mode == "better":
+        start, sans, first_ply = before, x.get("better_sans") or [], p["ply"]
+    else:
+        start = before.copy()
+        start.push(chess.Move.from_uci(p["played_uci"]))
+        sans, first_ply = x.get("punish_sans") or [], p["ply"] + 1
+    if not sans:
+        st.caption("אין קו להצגה בעמדה הזו.")
+        return
+    pk = f"{k}_{mode}_ply"
+    st.session_state.setdefault(pk, 1)
+    cur = min(st.session_state[pk], len(sans))
+    b, last = start.copy(), None
+    for san in sans[:cur]:
+        last = b.push_san(san)
+    st.image(board_svg(b, p["color"], last, size=400), width=400)
+    c = st.columns(4)
+    c[0].button("התחלה", key=f"{pk}_s", on_click=set_state, args=(pk, 0), disabled=cur == 0, width="stretch")
+    c[1].button("הקודם", key=f"{pk}_p", on_click=set_state, args=(pk, max(0, cur - 1)), disabled=cur == 0, width="stretch")
+    c[2].button("הבא", key=f"{pk}_n", on_click=set_state, args=(pk, min(len(sans), cur + 1)),
+                disabled=cur >= len(sans), width="stretch")
+    c[3].button("סוף", key=f"{pk}_e", on_click=set_state, args=(pk, len(sans)), disabled=cur >= len(sans), width="stretch")
+    intro = ("הקו של המנוע אחרי המסע הנכון:" if mode == "better"
+             else f'מה קורה אחרי {move_label(p["ply"], p["played"])}, לפי המנוע:')
+    md(f'<div class="note" style="margin-top:6px">{intro}</div>' + line_html(sans, first_ply, cur))
+
+
 def mistake_card(p, n):
     x = explain_p(p)
     lv = level_view(p)
@@ -901,9 +950,7 @@ def mistake_card(p, n):
     with st.container(border=True, key=f"card_mk_{n}"):
         a, b = st.columns([1, 1.35], gap="large")
         with a:
-            st.image(board_svg(chess.Board(p["fen"]), p["color"], None,
-                               [(p["played_uci"], RED), (p["best_uci"], GREEN)], size=400), width=400)
-            md(arrow_legend())
+            line_board(p, x)
             md(f'<div class="note" style="margin-top:10px"><a href="{x["url"]}" target="_blank">פתיחת העמדה בלוח הניתוח של Lichess ↗</a></div>')
         with b:
             _, _, why = STATUS[p["status"]]

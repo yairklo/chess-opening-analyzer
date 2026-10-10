@@ -169,6 +169,7 @@ def explain(p):
         why = (f"אין הפסד חומר מיידי, אבל העמדה נהיית קשה: סיכויי הניצחון יורדים מ‑{p['win_before']:.0f}% "
                f"ל‑{p['win_after']:.0f}% (מבנה, פיתוח או ביטחון המלך).")
     return dict(punish=numbered(punish, p["ply"] + 1), punish_first=punish[0] if punish else None,
+                punish_sans=punish, better_sans=better,
                 better=numbered(better, p["ply"]), why=why, lost=lost, gain=gain,
                 url=analysis_url(p["fen"], p["color"]))
 
