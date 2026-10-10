@@ -256,13 +256,13 @@ def engine_panel(user, has_errors):
     if state == "running":
         analysis_progress(user)
     elif has_errors:
-        st.caption(f"✓ נותח ב‑Stockfish (עומק {C.ENGINE_DEPTH}).")
+        st.caption(f"✓ נותח ־Stockfish (עומק {C.ENGINE_DEPTH}).")
     else:
         if state == "failed":
             st.error("הניתוח נכשל. אפשר לנסות שוב.")
         n = stamp[0] if stamp else 0
         st.caption(f"הטעויות בפתיחה עוד לא נותחו. ניתוח {n:,} משחקים לוקח בערך {max(1, round(n * 0.65 / 60))} דקות.")
-        st.button("נתח טעויות ב‑Stockfish", on_click=start_analysis, args=(user,), icon=":material/memory:",
+        st.button("נתח טעויות ־Stockfish", on_click=start_analysis, args=(user,), icon=":material/memory:",
                   width="stretch", key="run_engine")
 
 
@@ -276,10 +276,10 @@ def add_player(name, n, run_engine=True):
             build_results(name)
             if run_engine:
                 start_analysis(name.lower())
-                line.write(f"{got} משחקים הורדו. ניתוח הטעויות ב‑Stockfish התחיל ברקע.")
+                line.write(f"{got} משחקים הורדו. ניתוח הטעויות ־Stockfish התחיל ברקע.")
             box.update(label=f"{name} נטען", state="complete")
     except FetchError as e:
-        st.error({"not found": f"לא נמצא ב‑Lichess שחקן בשם '{name}'.", "valid": "שם המשתמש לא תקין."}.get(
+        st.error({"not found": f"לא נמצא ־Lichess שחקן בשם '{name}'.", "valid": "שם המשתמש לא תקין."}.get(
             next((k for k in ("not found", "valid") if k in str(e)), ""), f"לא נמצאו משחקים עבור '{name}'."))
         return
     except Exception as e:  # network problems, rate limits...
@@ -455,11 +455,11 @@ with st.sidebar:
     md('<div class="brand">♞ ניתוח <span>פתיחות</span></div>')
     user = st.selectbox("שחקן", players, key="user",
                         format_func=lambda u: f"{u} (אני)" if u == C.USER.lower() else u)
-    with st.popover("הוספת שחקן מ‑Lichess", icon=":material/person_add:", width="stretch"):
+    with st.popover("הוספת שחקן ־Lichess", icon=":material/person_add:", width="stretch"):
         with st.form("add_player", border=False, clear_on_submit=True):
-            name = st.text_input("שם משתמש ב‑Lichess", placeholder="DrNykterstein", key="add_name")
+            name = st.text_input("שם משתמש ־Lichess", placeholder="DrNykterstein", key="add_name")
             n_games = st.segmented_control("כמה משחקים אחרונים", [200, 500, 1000], default=500)
-            run_engine = st.checkbox("לנתח מיד גם את הטעויות ב‑Stockfish (ברקע)", True)
+            run_engine = st.checkbox("לנתח מיד גם את הטעויות ־Stockfish (ברקע)", True)
             st.caption("ההורדה לוקחת בערך דקה לכל 500 משחקים, ועץ הפתיחות והחולשות מוכנים מיד אחריה. "
                        "ניתוח הטעויות לוקח עוד כ‑5 דקות לכל 500 משחקים, ואפשר להמשיך לעבוד בזמן שהוא רץ.")
             go_add = st.form_submit_button("הורד ונתח", type="primary", width="stretch")
@@ -734,7 +734,7 @@ def board_viewer(r, color, key):
                f'<div class="note">עברו קדימה עד רגע הטעות, או לחצו "רגע הטעות" כדי לקפוץ ישר אליו.</div>')
         md('<div style="margin-top:14px"></div>' + moves_html(moves[:err], upto=err, cur=ply if ply < err else None, err=err))
         md(f'<div class="note" style="margin-top:12px">{RESULTS[r.result]} · {fmt_date(r.created)} · '
-           f'<a href="https://lichess.org/{r.id}/{color}#{err}" target="_blank">פתיחת המשחק ב‑Lichess ↗</a></div>')
+           f'<a href="https://lichess.org/{r.id}/{color}#{err}" target="_blank">פתיחת המשחק ־Lichess ↗</a></div>')
 
 
 def short_name(r):
@@ -773,8 +773,10 @@ def page_openings():
     # the table is right-aligned, so the tree indent goes after the (left-to-right) name: deeper rows shift left
     view = pd.DataFrame({
         **({"צבע": t.color.map(COLORS)} if len(colors) == 2 else {}),
-        "פתיחה": [clip(short_name(r), 34) + ("  ⚠" if r.toxic else "") + (" ┘" + " " * (2 * r.depth - 1) if r.depth else "")
-                  for r in t.itertuples()] if tree else [clip(o, 34) + ("  ⚠" if x else "") for x, o in zip(t.toxic, t.opening)],
+        # the column holds ~30 characters; deeper rows lose room to the indent, so their names are shortened more
+        "פתיחה": [clip(short_name(r), max(14, 28 - 2 * r.depth)) + ("  ⚠" if r.toxic else "")
+                  + (" ┘" + " " * r.depth if r.depth else "")
+                  for r in t.itertuples()] if tree else [clip(o, 28) + ("  ⚠" if x else "") for x, o in zip(t.toxic, t.opening)],
         "מסעים": [LRM + tail_moves(g) + LRM for g in t.group], "משחקים": t.games,
         "אחוז נקודות": t.score * 100, "מול הממוצע": (t.score - t.base) * 100, "נקודות שאבדו": t.cost})
     key = f"op_table_{show}_{sort}_{st.session_state.get('op_nonce', 0)}"
@@ -944,7 +946,7 @@ def page_mistakes():
     if not analyzed:
         section("טעויות שחוזרות על עצמן")
         empty(f"הטעויות של {esc(user)} עוד לא נותחו במנוע. "
-              "הפעילו את הניתוח בסרגל הצד (\"נתח טעויות ב‑Stockfish\"); בינתיים מסך נקודות החולשה כבר מוכן.")
+              "הפעילו את הניתוח בסרגל הצד (\"נתח טעויות ־Stockfish\"); בינתיים מסך נקודות החולשה כבר מוכן.")
         return
     rec = [p for p in probs if p["count"] >= C.MIN_PROBLEM_GAMES]
     counts = {s: sum(p["status"] == s for p in rec) for s in STATUS}
@@ -982,7 +984,7 @@ def page_mistakes():
         return
     export = items[:60]
     a, b = st.columns([3, 1.3], vertical_alignment="center")
-    a.caption(f"ייצוא {len(export)} העמדות הראשונות כ‑PGN ל‑Lichess Study (Study ← Add chapter ← PGN). בכל פרק: הקו של המנוע, "
+    a.caption(f"ייצוא {len(export)} העמדות הראשונות ־PGN ־Lichess Study (Study ← Add chapter ← PGN). בכל פרק: הקו של המנוע, "
               "המסע ששוחק עם ההסבר וקו העונש, ותשובות היריבים בפועל כווריאציות.")
     pgn_key = f"pgn_{user}_{thr}_{sig_items(export)}"
     if pgn_key in st.session_state:
@@ -994,7 +996,7 @@ def page_mistakes():
         st.rerun()
     if not C.lichess_token():
         st.caption("כדי לראות גם מה משחקים שחקנים ברמה דומה בכל עמדה (Lichess Opening Explorer) צריך טוקן אישי של Lichess בקובץ data/lichess_token.txt: "
-                   "ה‑API של ה‑Explorer דורש כיום טוקן אישי. ראו README.")
+                   "־API של ־Explorer דורש כיום טוקן אישי. ראו README.")
     sig = f"{scope}|{sort}|{hide}|{colors}"
     if st.session_state.get("mk_sig") != sig:
         st.session_state.update(mk_sig=sig, mk_n=5)
@@ -1095,7 +1097,7 @@ def page_practice():
                     g[j % 2].button(m, key=f"opt_{sig}_{i}_{j}", on_click=answer, args=(m, p["best_san"]), width="stretch")
             if ans:
                 if ans == p["best_san"]:
-                    st.success(f"נכון! {p['best_san']} הוא המסע ש‑Stockfish ממליץ עליו.", icon=":material/check_circle:")
+                    st.success(f"נכון! {p['best_san']} הוא המסע ־Stockfish ממליץ עליו.", icon=":material/check_circle:")
                 elif ans == p["played"]:
                     st.error(f"זה בדיוק המסע ששיחקת במשחקים ({p['mistakes']} מתוך {p['reached']} פעמים). "
                              f"עדיף {p['best_san']}.", icon=":material/cancel:")

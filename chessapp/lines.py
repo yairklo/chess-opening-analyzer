@@ -136,12 +136,24 @@ def explain(p):
     after.push(chess.Move.from_uci(p["played_uci"]))
     punish_ucis, cp_after = pv(after)
     punish, end = settled_line(after, punish_ucis)
-    better, end_best = settled_line(before, pv(before)[0]) if p["best_uci"] else ([], before)
+    best_ucis, cp_before = pv(before)
+    better, end_best = settled_line(before, best_ucis) if p["best_uci"] else ([], before)
     lost = balance(before, me) - balance(end, me)
     gain = balance(end_best, me) - balance(before, me)
     mine_cp = cp_after if me == chess.WHITE else -cp_after
     if end.is_checkmate() or mine_cp <= -9000:
         why = "אחרי המסע הזה ליריב יש מט כפוי."
+    elif lost >= 1 and mine_cp > -50:
+        # material goes, but the engine still calls the position about equal: compensation, as in a gambit
+        mine_before = cp_before if me == chess.WHITE else -cp_before
+        gave, _ = trade(before, end, me)
+        why = (f"המסע נותן {pieces_text(gave) or 'חומר'}, אבל לפי המנוע יש פיצוי והעמדה נשארת כמעט שקולה "
+               f"({mine_cp / 100:+.1f}). הבעיה היא שמסע אחר שמר על יתרון ({mine_before / 100:+.1f}).")
+    elif lost >= 1 and lost > ((cp_before if me == chess.WHITE else -cp_before) - mine_cp) / 100 + 1:
+        # the line still leaves something hanging: the material count says more than the engine's own evaluation
+        mine_before = cp_before if me == chess.WHITE else -cp_before
+        why = (f"לפי המנוע העמדה יורדת בכ‑{(mine_before - mine_cp) / 100:.1f} פיון (סיכויי הניצחון {p['win_before']:.0f}% ← "
+               f"{p['win_after']:.0f}%), בלי הפסד חומר מובהק בסוף הקו.")
     elif lost >= 1:
         gave, got = trade(before, end, me)
         why = (f"בקו של המנוע ({punish[0] if punish else ''} ואילך, עד שנגמרות ההכאות) הולכים {pieces_text(gave)}"
