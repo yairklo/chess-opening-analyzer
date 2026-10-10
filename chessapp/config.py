@@ -66,6 +66,16 @@ def lichess_token():
         tok = tok.strip().strip('"').strip("'")
     return tok or None
 EXPLORER_URL = "https://explorer.lichess.ovh/lichess"
+MASTERS_URL = "https://explorer.lichess.ovh/masters"
+
+# --- line trainer: how deep a line is worth drilling ---
+TRAIN_CRIT_GAP = 10        # best move beats the 2nd best by >= 10 win% points -> a critical ("only move") moment
+TRAIN_ACCEPT = 5           # an answer within 5 win% points of the best move counts as correct
+TRAIN_LEVEL_GAMES = 50     # still "practical theory" while >= 50 Lichess games at the player's level reached the position
+TRAIN_MASTERS_GAMES = 20   # ... or >= 20 master games
+TRAIN_DEFAULT_MOVES = 3    # always at least 3 own moves (the default when nothing is known about the line)
+TRAIN_QUIET_STOP = 2       # stop after 2 own moves in a row that are neither critical nor known
+TRAIN_MAX_MOVES = 10       # never more than 10 own moves
 
 # --- learning over time ---
 LEARN_MIN_REACHED = 3       # fewer visits to the position than this -> "not enough data"

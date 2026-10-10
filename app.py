@@ -952,6 +952,9 @@ def mistake_card(p, n):
         with a:
             line_board(p, x)
             md(f'<div class="note" style="margin-top:10px"><a href="{x["url"]}" target="_blank">פתיחת העמדה בלוח הניתוח של Lichess ↗</a></div>')
+            if me:
+                st.button("התאמן על הקו הזה", key=f"train_{tr_key(p)}", on_click=start_training, args=(tr_key(p),),
+                          icon=":material/school:", width="stretch", type="primary")
         with b:
             _, _, why = STATUS[p["status"]]
             cost = p["cost"]
@@ -1129,6 +1132,185 @@ def page_mistakes():
                            "ירידה בסיכויים": st.column_config.NumberColumn(format="%.0f%%", help="ממוצע הירידה בסיכויי הניצחון")})
 
 
+# ---------------------------------------------------------------- line trainer
+TR_REASON = {
+    "critical": lambda i: f"רגע קריטי: יש כאן רק מסע אחד טוב (הפער לשני הטוב ביותר: {i['gap']:.0f}% בסיכויי הניצחון).",
+    "known": lambda i: ("עדיין תיאוריה מעשית: " + " · ".join(
+        x for x in [f"{i['level_n']:,} משחקים ברמה שלך" if i["level_n"] else "",
+                    f"{i['masters_n']:,} משחקי מאסטרים" if i["masters_n"] else ""] if x) + "."),
+    "default": lambda i: "שלושת המסעים הראשונים תמיד נכללים (אין כאן רגע קריטי וגם לא תיאוריה ידועה).",
+    "quiet": lambda i: "העמדה כבר סלחנית ולא נפוצה. עוד מסע אחד לבדיקה, ואם גם הוא כזה, הקו נגמר.",
+}
+TR_STOP = {
+    "quiet": "מכאן העמדה סלחנית: כמה מסעים טובים כמעט באותה מידה, והיא כבר לא נפוצה ברמה שלך או אצל מאסטרים. "
+             "אין צורך לשנן הלאה.",
+    "max": f"הגענו לתקרה של {C.TRAIN_MAX_MOVES} מסעים.",
+    "over": "המשחק הסתיים.",
+}
+
+
+@st.cache_data(show_spinner="המנוע בודק את העמדה...")
+def tr_node(fen, color, rating):
+    from chessapp.trainer import node
+    return node(chess.Board(fen), color, rating)
+
+
+@st.cache_data(show_spinner="מחפש תגובות של היריב...")
+def tr_opp(fen, rating, from_games):
+    from chessapp.trainer import opponent_options
+    return opponent_options(chess.Board(fen), rating, [dict(san=s, n=n) for s, n in from_games])
+
+
+def tr_key(p):
+    return f'{p["color"]}|{p["key"]}|{p["played"]}'
+
+
+def start_training(key):
+    go("practice")
+    st.session_state.pr_mode = "line"
+    st.session_state.tr_pick = key
+
+
+def tr_reset(key, mine_first, p):
+    st.session_state.update(tr_sig=(key, mine_first), tr_moves=[], tr_turn="me", tr_done=0, tr_quiet=0, tr_log=[],
+                            tr_answer=None, tr_decided=-1, tr_reason=None, tr_stop=None, tr_snaps=[])
+    if mine_first:  # train the line that follows the player's own move (it works at the player's level)
+        st.session_state.update(tr_moves=[p["played_uci"]], tr_turn="opp", tr_done=1,
+                                tr_log=[dict(san=p["played"], ok=True, drop=0, reason="mine", best=p["played"], chosen=p["played"])])
+
+
+def tr_answer(board, info, uci, color):
+    from chessapp.trainer import evaluate
+    st.session_state.tr_answer = evaluate(board, info, uci, color)
+
+
+def tr_continue(board):
+    a = st.session_state.tr_answer
+    move = a["uci"] if a["ok"] else a["best"]
+    san = lambda u: board.san(chess.Move.from_uci(u))
+    st.session_state.tr_log.append(dict(san=san(move), chosen=san(a["uci"]), best=san(a["best"]), ok=a["ok"],
+                                        drop=a["drop"], is_best=a["is_best"], reason=st.session_state.tr_reason))
+    st.session_state.tr_moves.append(move)
+    st.session_state.update(tr_done=st.session_state.tr_done + 1, tr_turn="opp", tr_answer=None)
+
+
+def tr_opp_pick(uci):
+    snap = {k: (list(v) if isinstance(v, list) else v) for k, v in st.session_state.items()
+            if k in ("tr_moves", "tr_done", "tr_quiet", "tr_log", "tr_decided")}
+    st.session_state.tr_snaps.append(snap)
+    st.session_state.tr_moves.append(uci)
+    st.session_state.tr_turn = "me"
+
+
+def tr_back():
+    snap = st.session_state.tr_snaps.pop()
+    st.session_state.update(**snap, tr_turn="opp", tr_answer=None, tr_stop=None)
+
+
+def page_trainer(items):
+    from chessapp.trainer import decide, my_options
+    section("אימון קו", "מתקנים את הטעות וממשיכים לשחק את הקו: אחרי כל מסע שלך בוחרים איך היריב עונה, ומוצאים את התשובה הטובה. "
+                        "האורך לא קבוע: הקו נמשך כל עוד יש רגעים קריטיים או שהעמדה עדיין נפוצה ברמה שלך או אצל מאסטרים.")
+    if not C.lichess_token():
+        st.caption("בלי טוקן של Lichess האימון עובד רק לפי המנוע (בלי \"נפוץ ברמה שלך\" ובלי מסד המאסטרים).")
+    names = {tr_key(p): f'{COLORS[p["color"]]} · {p["opening"]} · {move_label(p["ply"], p["played"])}' for p in items}
+    if st.session_state.get("tr_pick") not in names:
+        st.session_state.tr_pick = next(iter(names))
+    key = st.selectbox("מאיזו טעות להתחיל?", list(names), format_func=names.get, key="tr_pick")
+    p = next(q for q in items if tr_key(q) == key)
+    lv = level_view(p)
+    mine_first = False
+    if lv and lv.get("works"):
+        mine_first = st.radio("מה לתרגל?", [False, True], horizontal=True, key=f"tr_variant_{key}",
+                              format_func={False: f"הקו של המנוע ({p['best_san']})",
+                                           True: f"המסע שלי ({p['played']}) והמשכו – הוא עובד ברמה שלי"}.get)
+    if st.session_state.get("tr_sig") != (key, mine_first):
+        tr_reset(key, mine_first, p)
+
+    color = p["color"]
+    rating = int(fdf[fdf.color == color].rating.median())
+    board = chess.Board(p["fen"])
+    sans = []
+    for u in st.session_state.tr_moves:
+        m = chess.Move.from_uci(u)
+        sans.append(board.san(m))
+        board.push(m)
+    last = board.move_stack[-1] if board.move_stack else None
+    turn = st.session_state.tr_turn
+
+    info = None
+    if turn == "me":
+        info = tr_node(board.fen(), color, rating)
+        if st.session_state.tr_decided != len(st.session_state.tr_moves):
+            go_on, quiet, reason = decide(st.session_state.tr_done, st.session_state.tr_quiet, info, board)
+            st.session_state.update(tr_decided=len(st.session_state.tr_moves), tr_quiet=quiet, tr_reason=reason)
+            if not go_on:
+                st.session_state.update(tr_turn="done", tr_stop=reason)
+                turn = "done"
+
+    with st.container(border=True, key="card_trainer"):
+        a, b = st.columns([1.15, 1], gap="large")
+        ans = st.session_state.tr_answer
+        with a:
+            arrows = []
+            if turn == "me" and ans:
+                arrows = [(ans["uci"], GREEN if ans["ok"] else RED)] + ([] if ans["is_best"] else [(ans["best"], GREEN)])
+            st.image(board_svg(board, color, last, arrows), width=460)
+            md(f'<div class="note">{chip(color)} {en(p["opening"])}</div>' + (line_html(sans, p["ply"], len(sans)) if sans else ""))
+        with b:
+            done = st.session_state.tr_done
+            if turn == "me":
+                md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">מסע {done + 1}: תור ה{COLORS[color]}. מה הכי טוב?</span></div>'
+                   f'<div class="level">{esc(TR_REASON[st.session_state.tr_reason](info))}</div>')
+                if not ans:
+                    mistake = p["played_uci"] if not st.session_state.tr_moves else None
+                    opts = my_options(board, info, mistake)
+                    g = st.columns(2)
+                    for j, u in enumerate(opts):
+                        g[j % 2].button(board.san(chess.Move.from_uci(u)), key=f"tro_{len(sans)}_{j}_{u}",
+                                        on_click=tr_answer, args=(board, info, u, color), width="stretch")
+                else:
+                    chosen = board.san(chess.Move.from_uci(ans["uci"]))
+                    best = board.san(chess.Move.from_uci(ans["best"]))
+                    if ans["is_best"]:
+                        st.success(f"נכון! {chosen} הוא המסע הטוב ביותר.", icon=":material/check_circle:")
+                    elif ans["ok"]:
+                        st.success(f"גם טוב: {chosen} רק {ans['drop']:.0f}% פחות מ־{best}. ממשיכים עם המסע שלך.",
+                                   icon=":material/check_circle:")
+                    else:
+                        st.error(f"{chosen} מוריד את סיכויי הניצחון ב־{ans['drop']:.0f}%. הטוב ביותר: {best}. "
+                                 f"ממשיכים עם {best}.", icon=":material/cancel:")
+                    st.button("המשך", type="primary", on_click=tr_continue, args=(board,), width="stretch",
+                              icon=":material/arrow_back:")
+            elif turn == "opp":
+                from_games = tuple((r["san"], r["n"]) for r in p["replies"]) if mine_first and len(sans) == 1 else ()
+                opts = tr_opp(board.fen(), rating, from_games)
+                if not opts:
+                    st.session_state.update(tr_turn="done", tr_stop="over")
+                    st.rerun()
+                md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">תור היריב: איך הוא עונה?</span></div>'
+                   '<div class="note">בחרו תגובה. אחר כך אפשר לחזור ולנסות תגובה אחרת.</div>')
+                for j, o in enumerate(opts):
+                    st.button(f'{o["san"]}   ·   {" · ".join(o["tags"])}', key=f"tropp_{len(sans)}_{o['uci']}",
+                              on_click=tr_opp_pick, args=(o["uci"],), width="stretch")
+            else:
+                log = st.session_state.tr_log
+                own = [l for l in log if l.get("reason") != "mine"]
+                ok = sum(l["ok"] for l in own)
+                why_asked = {"critical": "רגע קריטי", "known": "תיאוריה", "default": "ברירת מחדל", "quiet": "סלחני"}
+                rows = "".join(
+                    f'<tr><td>{"✓" if l["ok"] else "✗"}</td><td><span class="ltr">{esc(l["chosen"])}</span></td>'
+                    f'<td>{"" if l["ok"] else en(l["best"])}</td>'
+                    f'<td class="muted small">{why_asked.get(l["reason"], "")}</td></tr>' for l in own)
+                md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">סוף הקו: {ok} מתוך {len(own)} נכונים</span></div>'
+                   f'<div class="level">{TR_STOP.get(st.session_state.tr_stop, "")}</div>'
+                   f'<table class="replies"><tr><th></th><th>בחרת</th><th>הטוב ביותר</th><th>למה נשאל</th></tr>{rows}</table>')
+                c1, c2 = st.columns(2)
+                if st.session_state.tr_snaps:
+                    c1.button("תגובה אחרת של היריב", on_click=tr_back, width="stretch", icon=":material/alt_route:")
+                c2.button("מההתחלה", on_click=tr_reset, args=(key, mine_first, p), width="stretch", icon=":material/replay:")
+
+
 # ---------------------------------------------------------------- practice
 def answer(choice, best):
     st.session_state.pr_answer = choice
@@ -1142,6 +1324,16 @@ def next_q():
 
 
 def page_practice():
+    mode = st.segmented_control("סוג תרגול", ["line", "quiz"], default="line", key="pr_mode",
+                                format_func={"line": "אימון קו (מתקנים וממשיכים לשחק)", "quiz": "חידון מהיר (מסע אחד)"}.get,
+                                label_visibility="collapsed")
+    if mode != "quiz":
+        items = sorted(recurring([p for p in probs if p["status"] != "learned"]), key=SORTS["default"])
+        if not items:
+            empty("אין כרגע טעויות חוזרות לאמן עליהן. 🎉")
+            return
+        page_trainer(items)
+        return
     section("תרגול", "העמדות שבהן טעית. מצאו את המסע הטוב ביותר – כמו במשחק אמיתי.")
     sources = {"mistakes": f"הטעויות החוזרות שלי ({C.MIN_PROBLEM_GAMES}+ משחקים)"}
     if not tbl.empty:

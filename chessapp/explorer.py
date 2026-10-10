@@ -20,20 +20,17 @@ def similar_ratings(rating: int):
     return ",".join(str(b) for b in RATING_BUCKETS[i:i + 2])
 
 
-def explore(fen: str, rating: int, speeds: str = "blitz,rapid"):
-    """(explorer data, None) or (None, reason in Hebrew). Successful answers are cached; failures are not."""
+def _fetch(url: str, params: dict, cache_params: str, fen: str):
+    """(data, None) or (None, reason in Hebrew). Successful answers are cached by (fen, cache_params); failures are not."""
     if not C.lichess_token():
         return None, "לא הוגדר טוקן של Lichess"
-    ratings = similar_ratings(rating)
-    params = f"{ratings}|{speeds}"
     con = db()
-    row = con.execute("SELECT json FROM explorer WHERE fen=? AND params=?", (fen, params)).fetchone()
+    row = con.execute("SELECT json FROM explorer WHERE fen=? AND params=?", (fen, cache_params)).fetchone()
     if row:
         return json.loads(row[0]), None
     try:
-        r = requests.get(C.EXPLORER_URL, params={"fen": fen, "ratings": ratings, "speeds": speeds, "moves": 6},
-                         headers={"Authorization": f"Bearer {C.lichess_token()}", "User-Agent": "yairklo-opening-analyzer"},
-                         timeout=15)
+        r = requests.get(url, params=params, timeout=15,
+                         headers={"Authorization": f"Bearer {C.lichess_token()}", "User-Agent": "yairklo-opening-analyzer"})
     except requests.RequestException as e:
         return None, f"אין חיבור ל‑Lichess ({type(e).__name__})"
     if r.status_code != 200:
@@ -43,9 +40,25 @@ def explore(fen: str, rating: int, speeds: str = "blitz,rapid"):
         data["moves"]  # noqa: B018 - make sure the answer has the expected shape
     except (ValueError, KeyError, TypeError):
         return None, "תשובה לא צפויה מ‑Lichess"
-    con.execute("INSERT OR REPLACE INTO explorer VALUES(?,?,?)", (fen, params, json.dumps(data)))
+    con.execute("INSERT OR REPLACE INTO explorer VALUES(?,?,?)", (fen, cache_params, json.dumps(data)))
     con.commit()
     return data, None
+
+
+def explore(fen: str, rating: int, speeds: str = "blitz,rapid"):
+    """Lichess games of players rated like `rating` in this position."""
+    ratings = similar_ratings(rating)
+    return _fetch(C.EXPLORER_URL, {"fen": fen, "ratings": ratings, "speeds": speeds, "moves": 6},
+                  f"{ratings}|{speeds}", fen)
+
+
+def explore_masters(fen: str):
+    """Over-the-board master games in this position: how far established theory goes."""
+    return _fetch(C.MASTERS_URL, {"fen": fen, "moves": 6, "topGames": 0}, "masters", fen)
+
+
+def games_in(data) -> int:
+    return data["white"] + data["draws"] + data["black"] if data else 0
 
 
 def lookup(fen: str, rating: int, speeds: str = "blitz,rapid"):
