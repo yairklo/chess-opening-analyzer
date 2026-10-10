@@ -16,7 +16,7 @@ from chessapp.analyze import build_results, users
 from chessapp.fetch_games import FetchError, fetch
 from chessapp.stats import (SORTS, load_results, move_label, occurrences, opening_table, overall, prepare,
                             problem_positions, san_of)
-from chessapp.explorer import explore
+from chessapp.explorer import explore, similar_ratings
 from chessapp.lines import explain, study_pgn
 
 st.set_page_config(page_title="ניתוח פתיחות", page_icon="♞", layout="wide")
@@ -101,6 +101,8 @@ background:var(--gray-50);color:#374151;border:1px solid var(--line);}
 .moves .n{color:var(--soft);margin:0 2px 0 6px;}
 .moves{word-break:normal;overflow-wrap:normal;} .moves .u{white-space:nowrap;display:inline-block;}
 .st-key-add_name input{direction:ltr;text-align:left;}
+.level{background:var(--gray-50);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:.88rem;margin:8px 0;}
+.level.good{background:var(--blue-50);border-color:#bfdbfe;color:#1e3a8a;}
 .why{background:var(--amber-50);border:1px solid #fde68a;border-radius:10px;padding:8px 12px;font-size:.88rem;color:#78350f;margin:8px 0;}
 .lines{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:.86rem;margin:8px 0;align-items:baseline;}
 .lines .k{color:var(--muted);white-space:nowrap;}
@@ -256,13 +258,13 @@ def engine_panel(user, has_errors):
     if state == "running":
         analysis_progress(user)
     elif has_errors:
-        st.caption(f"✓ נותח ־Stockfish (עומק {C.ENGINE_DEPTH}).")
+        st.caption(f"✓ נותח ב־Stockfish (עומק {C.ENGINE_DEPTH}).")
     else:
         if state == "failed":
             st.error("הניתוח נכשל. אפשר לנסות שוב.")
         n = stamp[0] if stamp else 0
         st.caption(f"הטעויות בפתיחה עוד לא נותחו. ניתוח {n:,} משחקים לוקח בערך {max(1, round(n * 0.65 / 60))} דקות.")
-        st.button("נתח טעויות ־Stockfish", on_click=start_analysis, args=(user,), icon=":material/memory:",
+        st.button("נתח טעויות ב־Stockfish", on_click=start_analysis, args=(user,), icon=":material/memory:",
                   width="stretch", key="run_engine")
 
 
@@ -276,10 +278,10 @@ def add_player(name, n, run_engine=True):
             build_results(name)
             if run_engine:
                 start_analysis(name.lower())
-                line.write(f"{got} משחקים הורדו. ניתוח הטעויות ־Stockfish התחיל ברקע.")
+                line.write(f"{got} משחקים הורדו. ניתוח הטעויות ב־Stockfish התחיל ברקע.")
             box.update(label=f"{name} נטען", state="complete")
     except FetchError as e:
-        st.error({"not found": f"לא נמצא ־Lichess שחקן בשם '{name}'.", "valid": "שם המשתמש לא תקין."}.get(
+        st.error({"not found": f"לא נמצא ב־Lichess שחקן בשם '{name}'.", "valid": "שם המשתמש לא תקין."}.get(
             next((k for k in ("not found", "valid") if k in str(e)), ""), f"לא נמצאו משחקים עבור '{name}'."))
         return
     except Exception as e:  # network problems, rate limits...
@@ -455,11 +457,11 @@ with st.sidebar:
     md('<div class="brand">♞ ניתוח <span>פתיחות</span></div>')
     user = st.selectbox("שחקן", players, key="user",
                         format_func=lambda u: f"{u} (אני)" if u == C.USER.lower() else u)
-    with st.popover("הוספת שחקן ־Lichess", icon=":material/person_add:", width="stretch"):
+    with st.popover("הוספת שחקן מ־Lichess", icon=":material/person_add:", width="stretch"):
         with st.form("add_player", border=False, clear_on_submit=True):
-            name = st.text_input("שם משתמש ־Lichess", placeholder="DrNykterstein", key="add_name")
+            name = st.text_input("שם משתמש ב־Lichess", placeholder="DrNykterstein", key="add_name")
             n_games = st.segmented_control("כמה משחקים אחרונים", [200, 500, 1000], default=500)
-            run_engine = st.checkbox("לנתח מיד גם את הטעויות ־Stockfish (ברקע)", True)
+            run_engine = st.checkbox("לנתח מיד גם את הטעויות ב־Stockfish (ברקע)", True)
             st.caption("ההורדה לוקחת בערך דקה לכל 500 משחקים, ועץ הפתיחות והחולשות מוכנים מיד אחריה. "
                        "ניתוח הטעויות לוקח עוד כ‑5 דקות לכל 500 משחקים, ואפשר להמשיך לעבוד בזמן שהוא רץ.")
             go_add = st.form_submit_button("הורד ונתח", type="primary", width="stretch")
@@ -734,7 +736,7 @@ def board_viewer(r, color, key):
                f'<div class="note">עברו קדימה עד רגע הטעות, או לחצו "רגע הטעות" כדי לקפוץ ישר אליו.</div>')
         md('<div style="margin-top:14px"></div>' + moves_html(moves[:err], upto=err, cur=ply if ply < err else None, err=err))
         md(f'<div class="note" style="margin-top:12px">{RESULTS[r.result]} · {fmt_date(r.created)} · '
-           f'<a href="https://lichess.org/{r.id}/{color}#{err}" target="_blank">פתיחת המשחק ־Lichess ↗</a></div>')
+           f'<a href="https://lichess.org/{r.id}/{color}#{err}" target="_blank">פתיחת המשחק ב־Lichess ↗</a></div>')
 
 
 def short_name(r):
@@ -894,6 +896,8 @@ def cost_note(p):
 
 def mistake_card(p, n):
     x = explain_p(p)
+    lv = level_view(p)
+    works = bool(lv and lv.get("works"))
     with st.container(border=True, key=f"card_mk_{n}"):
         a, b = st.columns([1, 1.35], gap="large")
         with a:
@@ -906,12 +910,14 @@ def mistake_card(p, n):
             cost = p["cost"]
             cost_txt = (f'<span style="color:var(--red)">−{cost:.1f}</span>' if cost > 0.05 else
                         f'<span style="color:var(--green)">+{-cost:.1f}</span>' if cost < -0.05 else "0")
-            md(f'<div class="card-h"><span class="rank">#{n}</span>{chip(p["color"])}{badge(p["status"])}</div>'
+            level_badge = f'<span class="badge b-blue">עובד ברמה {you("שלך", "הזו")}</span>' if works else ""
+            md(f'<div class="card-h"><span class="rank">#{n}</span>{chip(p["color"])}{badge(p["status"])}{level_badge}</div>'
                f'<div class="card-h"><span class="t">{en(p["opening"])}</span></div>'
                f'{moves_html(p["pre_moves"])}'
                f'<div class="cmp"><div class="bad"><div class="k">{you("שיחקת", "שוחק")}</div><div class="v">{esc(move_label(p["ply"], p["played"]))}</div></div>'
                f'<div class="good"><div class="k">עדיף לשחק</div><div class="v">{esc(move_label(p["ply"], p["best_san"] or "?"))}</div></div></div>'
-               f'<div class="why"><b>למה זו טעות:</b> {esc(x["why"])}</div>'
+               f'<div class="why"><b>{"למה Stockfish מחשיב את זה טעות" if works else "למה זו טעות"}:</b> {esc(x["why"])}</div>'
+               f'{level_html(p, lv)}'
                f'<div class="lines"><span class="k">העונש (מנוע):</span><span class="ltr">{esc(x["punish"]) or "—"}</span>'
                f'<span class="k">הקו הנכון:</span><span class="ltr">{esc(x["better"]) or "—"}</span></div>'
                f'<div class="stats"><div><div class="k">{you("חזרת על הטעות", "חזרות על הטעות")}</div><div class="v">{p["mistakes"]} מתוך {p["reached"]}</div></div>'
@@ -923,13 +929,60 @@ def mistake_card(p, n):
                f'<div class="note" style="margin-top:10px">{usual_html(p)}</div>'
                f'<div class="note">{why}</div>'
                f'<div class="note" style="margin-top:10px">המשחקים:</div>{game_links(p["games"], p["color"], p["ply"])}')
-            if C.lichess_token():
-                rating = int(fdf[fdf.color == p["color"]].rating.median())
-                ex, reason = explorer(p["fen"], rating)
-                if ex:
-                    md(explorer_html(ex, p["color"]))
-                else:
-                    st.caption(f"Opening Explorer לא זמין כרגע: {reason}.")
+            if lv and lv.get("ex"):
+                md(explorer_html(lv["ex"], p["color"]))
+            elif lv:
+                st.caption(f"Opening Explorer לא זמין כרגע: {lv['error']}.")
+
+
+LEVEL_MIN_GAMES = 100   # fewer Lichess games than this for the move played: no verdict
+
+
+def level_range(rating):
+    b = [int(x) for x in similar_ratings(rating).split(",")]
+    return f"{b[0]}–{b[-1] + 200}"
+
+
+def level_view(p):
+    """How the move played and the engine's move score in Lichess games at the player's rating (Opening Explorer).
+    works = the move played is common enough and scores at least 50% and at least as well as the engine's move."""
+    if not C.lichess_token():
+        return None
+    rating = int(fdf[fdf.color == p["color"]].rating.median())
+    ex, reason = explorer(p["fen"], rating)
+    if not ex:
+        return {"error": reason}
+    total = ex["white"] + ex["draws"] + ex["black"]
+    moves = {}
+    for m in ex["moves"]:
+        t = m["white"] + m["draws"] + m["black"]
+        if t:
+            mine = m["white"] if p["color"] == "white" else m["black"]
+            moves[m["san"]] = {"n": t, "share": t / total if total else 0, "score": (mine + m["draws"] / 2) / t}
+    pl, be = moves.get(p["played"]), moves.get(p["best_san"])
+    works = bool(pl and pl["n"] >= LEVEL_MIN_GAMES and pl["score"] >= 0.5 and (be is None or pl["score"] >= be["score"]))
+    return {"ex": ex, "played": pl, "best": be, "works": works, "level": level_range(rating)}
+
+
+def level_html(p, lv):
+    """The practical verdict shown on the card, next to the engine's verdict."""
+    if not lv or "error" in lv:
+        return ""
+    pl, be, played, best = lv["played"], lv["best"], esc(p["played"]), esc(p["best_san"] or "?")
+    where = f"שחקנים בדירוג {lv['level']} ב־Lichess (בליץ ורפיד)"
+    if not pl:
+        return (f'<div class="level"><b>ברמה {you("שלך", "של השחקן")}:</b> {where} כמעט לא משחקים כאן '
+                f'<span class="ltr">{played}</span>, אז אין נתון מעשי שסותר את המנוע.</div>')
+    best_txt = (f'לעומת {pct(be["score"])} עם <span class="ltr">{best}</span> ({be["n"]:,} משחקים)' if be
+                else f'(<span class="ltr">{best}</span> של המנוע כמעט לא משוחק ברמה הזו)')
+    stats = (f'{where} משחקים כאן <span class="ltr">{played}</span> ב‑{pct(pl["share"])} מהמשחקים '
+             f'({pl["n"]:,}) ומשיגים {pct(pl["score"])}, {best_txt}.')
+    if lv["works"]:
+        own = (f' {you("אצלך", "אצל השחקן")} המסע השיג {pct(p["score"])} ב‑{p["count"]} משחקים'
+               + (", כך שכנראה כדאי ללמוד את ההמשך שלו ולא לוותר עליו." if p["score"] < pl["score"] - 0.05 else "."))
+        return (f'<div class="level good"><b>בפועל זה עובד ברמה {you("שלך", "הזו")}:</b> {stats} '
+                f'Stockfish צודק בתיאוריה, אבל ברמה הזו היריבים בדרך כלל לא מוצאים את ההפרכה.{own}</div>')
+    return f'<div class="level"><b>גם ברמה {you("שלך", "הזו")} המנוע צודק:</b> {stats}</div>'
 
 
 def sig_items(items):
@@ -946,7 +999,7 @@ def page_mistakes():
     if not analyzed:
         section("טעויות שחוזרות על עצמן")
         empty(f"הטעויות של {esc(user)} עוד לא נותחו במנוע. "
-              "הפעילו את הניתוח בסרגל הצד (\"נתח טעויות ־Stockfish\"); בינתיים מסך נקודות החולשה כבר מוכן.")
+              "הפעילו את הניתוח בסרגל הצד (\"נתח טעויות ב־Stockfish\"); בינתיים מסך נקודות החולשה כבר מוכן.")
         return
     rec = [p for p in probs if p["count"] >= C.MIN_PROBLEM_GAMES]
     counts = {s: sum(p["status"] == s for p in rec) for s in STATUS}
@@ -973,6 +1026,15 @@ def page_mistakes():
     hide = c3.toggle("הסתר טעויות שנלמדו", True, key="mk_hide")
     items = {"all": probs, "two": [p for p in probs if p["count"] >= 2]}.get(scope, rec)
     items = sorted((p for p in items if not (hide and p["status"] == "learned")), key=SORTS[sort])
+    if C.lichess_token() and items:
+        # checked only for repeated mistakes, to keep the number of Explorer requests small
+        practical = [p for p in items if p["count"] >= 2 and (level_view(p) or {}).get("works")]
+        if practical and st.toggle(f"הסתר מסעים שעובדים ברמה {you('שלי', 'של השחקן')} ({len(practical)})", False,
+                                   key="mk_hide_level",
+                                   help="מסעים ש־Stockfish מחשיב טעות, אבל ב־Lichess, ברמת דירוג דומה, הם נפוצים "
+                                        "ומשיגים לפחות 50% ולפחות כמו המסע של המנוע (למשל גמביטים מעשיים)."):
+            skip = {(q["key"], q["played"]) for q in practical}
+            items = [p for p in items if (p["key"], p["played"]) not in skip]
     if not items:
         if probs and scope != "all":
             empty(f"אין טעויות שחוזרות {'ב‑' + str(C.MIN_PROBLEM_GAMES) + '+' if scope == 'rec' else 'ב‑2+'} משחקים בסף הנוכחי "
@@ -984,7 +1046,7 @@ def page_mistakes():
         return
     export = items[:60]
     a, b = st.columns([3, 1.3], vertical_alignment="center")
-    a.caption(f"ייצוא {len(export)} העמדות הראשונות ־PGN ־Lichess Study (Study ← Add chapter ← PGN). בכל פרק: הקו של המנוע, "
+    a.caption(f"ייצוא {len(export)} העמדות הראשונות כ־PGN ל־Lichess Study (Study ← Add chapter ← PGN). בכל פרק: הקו של המנוע, "
               "המסע ששוחק עם ההסבר וקו העונש, ותשובות היריבים בפועל כווריאציות.")
     pgn_key = f"pgn_{user}_{thr}_{sig_items(export)}"
     if pgn_key in st.session_state:
@@ -996,7 +1058,7 @@ def page_mistakes():
         st.rerun()
     if not C.lichess_token():
         st.caption("כדי לראות גם מה משחקים שחקנים ברמה דומה בכל עמדה (Lichess Opening Explorer) צריך טוקן אישי של Lichess בקובץ data/lichess_token.txt: "
-                   "־API של ־Explorer דורש כיום טוקן אישי. ראו README.")
+                   "ה־API של ה־Explorer דורש כיום טוקן אישי. ראו README.")
     sig = f"{scope}|{sort}|{hide}|{colors}"
     if st.session_state.get("mk_sig") != sig:
         st.session_state.update(mk_sig=sig, mk_n=5)
@@ -1041,6 +1103,12 @@ def page_practice():
     src = st.selectbox("מה לתרגל?", list(sources), format_func=sources.get, key="pr_src")
     if src == "mistakes":
         items = sorted(recurring([p for p in probs if p["status"] != "learned"]), key=SORTS["default"])[:15]
+        if C.lichess_token():
+            works = [p for p in items if (level_view(p) or {}).get("works")]
+            if works:
+                st.caption(f"לא נכללו {len(works)} מסעים ש־Stockfish מחשיב טעות אבל עובדים ברמה שלך "
+                           f"(למשל {works[0]['played']} ב־{works[0]['opening']}). אפשר לראות אותם בטעויות החוזרות.")
+                items = [p for p in items if p not in works]
     else:
         op = tbl[tbl.key == src].iloc[0]
         ids = set(node_games(op).id)
@@ -1097,7 +1165,7 @@ def page_practice():
                     g[j % 2].button(m, key=f"opt_{sig}_{i}_{j}", on_click=answer, args=(m, p["best_san"]), width="stretch")
             if ans:
                 if ans == p["best_san"]:
-                    st.success(f"נכון! {p['best_san']} הוא המסע ־Stockfish ממליץ עליו.", icon=":material/check_circle:")
+                    st.success(f"נכון! {p['best_san']} הוא המסע ש־Stockfish ממליץ עליו.", icon=":material/check_circle:")
                 elif ans == p["played"]:
                     st.error(f"זה בדיוק המסע ששיחקת במשחקים ({p['mistakes']} מתוך {p['reached']} פעמים). "
                              f"עדיף {p['best_san']}.", icon=":material/cancel:")
