@@ -158,12 +158,16 @@ def explain(p):
     mine_cp = cp_after if me == chess.WHITE else -cp_after
     mine_before = cp_before if me == chess.WHITE else -cp_before
     drop = (mine_before - mine_cp) / 100
+    best_label = move_label(p["ply"], before.san(chess.Move.from_uci(p["best_uci"]))) if p["best_uci"] else ""
+    drop_short = f"סיכויי הניצחון יורדים מ־{p['win_before']:.0f}% ל־{p['win_after']:.0f}%"
     if end.is_checkmate() or mine_cp <= -9000:
         why = "אחרי המסע הזה ליריב יש מט כפוי."
+        short = why
     elif lost >= 1 and mine_cp > -50:
         # material goes, but the engine still likes the position: compensation (about equal) or a smaller edge
         gave, _ = trade(before, end, me)
         gave_txt = pieces_text(gave) or "חומר"
+        short = f"נותן {gave_txt}" + (f", ו־{best_label} שומר על יתרון גדול יותר" if best_label else "")
         if mine_cp <= 50:
             why = (f"המסע נותן {gave_txt}, אבל לפי המנוע יש פיצוי והעמדה נשארת כמעט שקולה "
                    f"({mine_cp / 100:+.1f}). הבעיה היא שמסע אחר שמר על יתרון ({mine_before / 100:+.1f}).")
@@ -172,13 +176,19 @@ def explain(p):
                    f"הבעיה היא שמסע אחר שמר על יתרון גדול יותר ({mine_before / 100:+.1f}).")
     elif lost >= 1 and lost > drop + 1:
         # the line still leaves something hanging: the material count says more than the engine's own evaluation
+        short = drop_short + ", בלי הפסד חומר מובהק"
         why = (f"לפי המנוע העמדה יורדת בכ‑{drop:.1f} פיון (סיכויי הניצחון {p['win_before']:.0f}% ← "
                f"{p['win_after']:.0f}%), בלי הפסד חומר מובהק בסוף הקו.")
     elif lost >= 1:
         gave, got = trade(before, end, me)
         why = (f"בקו של המנוע ({punish[0] if punish else ''} ואילך, עד שנגמרות ההכאות) הולכים {pieces_text(gave)}"
                + (f" תמורת {pieces_text(got)}" if got else " בלי פיצוי") + ".")
+        n_given = sum(gave.values())
+        short = (f"אחרי {move_label(p['ply'] + 1, punish[0])} " if punish else "") + \
+                f"{'הולכים' if n_given > 1 else 'הולך'} {pieces_text(gave)}" + \
+                (f" תמורת {pieces_text(got)}" if got else " בלי פיצוי")
         if drop - lost >= 1.5:
+            short += f", וההערכה יורדת בכ־{drop:.1f} פיון"
             # the material count understates it: structure, initiative or threats beyond the exchange
             why += (f" וזה לא כל הסיפור: לפי המנוע ההערכה יורדת בכ‑{drop:.1f} פיון, יותר ממה שמשקף החומר "
                     f"(סיכויי הניצחון {p['win_before']:.0f}% ← {p['win_after']:.0f}%).")
@@ -186,15 +196,18 @@ def explain(p):
         # "missed chance" only when the move played is not itself losing; otherwise it is simply a bad move
         got, _ = trade(before, end_best, not me)
         why = f"החמצה: המסע המומלץ זוכה ב{pieces_text(got) or 'חומר'}, והמסע ששוחק מפספס את זה (אבל לא מפסיד)."
+        short = f"החמצה: {best_label} זוכה ב{pieces_text(got) or 'חומר'}"
     elif mine_cp <= -150:
+        short = drop_short
         why = (f"בלי הפסד חומר מיידי, אבל לפי המנוע העמדה נהיית מפסידה: סיכויי הניצחון יורדים מ‑{p['win_before']:.0f}% "
                f"ל‑{p['win_after']:.0f}%.")
     else:
+        short = drop_short + ", והעמדה נהיית קשה"
         why = (f"אין הפסד חומר מיידי, אבל העמדה נהיית קשה: סיכויי הניצחון יורדים מ‑{p['win_before']:.0f}% "
                f"ל‑{p['win_after']:.0f}% (מבנה, פיתוח או ביטחון המלך).")
     return dict(punish=numbered(punish, p["ply"] + 1), punish_first=punish[0] if punish else None,
                 punish_sans=punish, better_sans=better,
-                better=numbered(better, p["ply"]), why=why, lost=lost, gain=gain,
+                better=numbered(better, p["ply"]), why=why, why_short=short, lost=lost, gain=gain,
                 url=analysis_url(p["fen"], p["color"]))
 
 

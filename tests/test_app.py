@@ -141,3 +141,53 @@ def test_drill_shows_the_trainer_card(monkeypatch):
     assert not at.exception, at.exception
     assert any("מסע 1: תור" in m.value for m in at.markdown)
     assert "→ חזרה לטעות" in labels(at)
+
+
+def test_plan_and_mistake_list_order_match():
+    at = run("plan3")
+    expected = []
+    for i in range(3):
+        at = run("plan3")
+        at = next(b for b in at.button if b.key == f"fix_{i}").click().run()
+        keys = at.session_state["mk_sel"]
+        crumb = next(m.value for m in at.markdown if "מתוך" in m.value and "mk-crumb" in m.value)
+        assert f"**{i + 1} מתוך" in crumb, (i, crumb)
+        expected.append(keys)
+    assert len(set(expected)) == 3
+    # first entry into the tab (no selection) starts at the plan's first mistake
+    at = run("plan3", "mistakes")
+    assert at.session_state["mk_sel"] == expected[0]
+
+
+def test_settings_change_clears_the_trainer():
+    at = run("plan3")
+    at = next(b for b in at.button if b.key == "fix_0").click().run()
+    assert at.session_state["mk_drill"] is True
+    at.radio(key="thr").set_value(8)
+    at = at.run()
+    assert at.session_state["mk_drill"] is False
+
+
+def test_why_short_keeps_the_move_and_stays_short():
+    from chessapp.lines import explain
+    import chess
+    # mate, material, missed chance and drops: any position works; the engine is not needed for the structure
+    fen = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
+    x = explain(dict(fen=fen, played_uci="g8f6", best_uci="f8c5", color="black", ply=6, win_before=60.0, win_after=40.0))
+    assert x["why_short"] and not x["why_short"].endswith("…")
+    assert len(x["why_short"].split()) <= 16
+
+
+def test_other_player_copy_is_third_person():
+    for page in ("home", "repertoire"):
+        at = run("plan3", page)
+        words = " ".join(m.value for m in at.markdown if "gloss" not in m.value and "pill" not in m.value[:60])
+        for w in ("אצלך", "אתה", "לך ", "שלך"):
+            assert w not in re.sub(r"<[^>]+>", " ", words), (page, w)
+
+
+def test_repertoire_lists_only_repeated_mistakes():
+    at = run("plan3", "repertoire")
+    assert not at.exception, at.exception
+    assert len([b for b in at.button if b.label == "לטעות ←"]) <= 2
+    assert not any("פעם אחת" in c.value and "·" in c.value for c in at.caption)

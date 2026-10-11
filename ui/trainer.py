@@ -69,8 +69,6 @@ def drill(p):
     """The line trainer for mistake `p`, drawn inside the Mistakes screen."""
     from chessapp.trainer import decide, my_options
     key = tr_key(p)
-    if not C.lichess_token():
-        st.caption("בלי טוקן של Lichess האימון עובד רק לפי המנוע (בלי \"נפוץ ברמה שלך\" ובלי מסד המאסטרים).")
     lv = level_view(p)
     mine_first = False
     if lv and lv.get("works"):
@@ -102,71 +100,66 @@ def drill(p):
                 turn = "done"
 
     with st.container(border=True, key="card_trainer"):
-        a, b = st.columns([1.15, 1], gap="large")
         ans = st.session_state.tr_answer
-        with a:
-            arrows, options, interactive, allow = [], [], False, None
-            if turn == "me" and ans:
-                arrows = [(ans["uci"], GREEN if ans["ok"] else RED)] + ([] if ans["is_best"] else [(ans["best"], GREEN)])
-            elif turn == "me":
-                mistake = p["played_uci"] if not st.session_state.tr_moves else None
-                options = [dict(uci=u, label=board.san(chess.Move.from_uci(u))) for u in my_options(board, info, mistake)]
-                interactive = True
-            elif turn == "opp":
-                from_games = tuple((r["san"], r["n"]) for r in p["replies"]) if mine_first and len(sans) == 1 else ()
-                opp = tr_opp(board.fen(), rating, from_games)
-                if not opp:
-                    st.session_state.update(tr_turn="done", tr_stop="over")
-                    st.rerun()
-                options = [dict(uci=o["uci"], label=o["san"], sub=" · ".join(o["tags"])) for o in opp]
-                interactive, allow = True, {o["uci"] for o in opp}
-            sig = abs(hash(st.session_state.get("tr_sig")))
-            val = chess_board(board, color, key=f"trb_{sig}_{len(sans)}_{turn}_{int(bool(ans))}", arrows=arrows,
-                              last=last, options=options, interactive=interactive, allow=allow)
-            mv = fresh_move(val, "tr_token", board) if interactive else None
-            if mv and turn == "me":
-                tr_answer(board, info, mv, color)
+        done = st.session_state.tr_done
+        title = {"me": f"מסע {done + 1}: תור ה{COLORS[color]}. מה הכי טוב?",
+                 "opp": "תור היריב: איך הוא עונה?"}.get(turn, "סוף הקו")
+        md(f'<div class="card-h">{chip(color)}<span class="t">{en(p["opening"])}</span>'
+           f'<span class="mk-sub">· {esc(title)}</span></div>')
+        arrows, options, interactive, allow = [], [], False, None
+        if turn == "me" and ans:
+            arrows = [(ans["uci"], GREEN if ans["ok"] else RED)] + ([] if ans["is_best"] else [(ans["best"], GREEN)])
+        elif turn == "me":
+            mistake = p["played_uci"] if not st.session_state.tr_moves else None
+            options = [dict(uci=u, label=board.san(chess.Move.from_uci(u))) for u in my_options(board, info, mistake)]
+            interactive = True
+        elif turn == "opp":
+            from_games = tuple((r["san"], r["n"]) for r in p["replies"]) if mine_first and len(sans) == 1 else ()
+            opp = tr_opp(board.fen(), rating, from_games)
+            if not opp:
+                st.session_state.update(tr_turn="done", tr_stop="over")
                 st.rerun()
-            elif mv and turn == "opp":
-                tr_opp_pick(mv)
-                st.rerun()
-            md(f'<div class="note">{chip(color)} {en(p["opening"])}</div>'
-               + (line_html(sans, p["ply"], len(sans)) if sans else ""))
-        with b:
-            done = st.session_state.tr_done
-            if turn == "me":
-                md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">מסע {done + 1}: תור ה{COLORS[color]}. '
-                   f'מה הכי טוב?</span></div>')
-                if not ans:
-                    md('<div class="note">גררו כלי על הלוח, או בחרו אחת מהאפשרויות מתחת ללוח '
-                       '(מעבר עם העכבר מסמן אותה על הלוח).</div>')
-                else:
-                    chosen = board.san(chess.Move.from_uci(ans["uci"]))
-                    best = board.san(chess.Move.from_uci(ans["best"]))
-                    if ans["is_best"]:
-                        st.success(f"נכון! {chosen} הוא המסע הטוב ביותר.", icon=":material/check_circle:")
-                    elif ans["ok"]:
-                        st.success(f"גם טוב: {chosen} רק {ans['drop']:.0f}% פחות מ־{best}. ממשיכים עם המסע שלך.",
-                                   icon=":material/check_circle:")
-                    else:
-                        st.error(f"{chosen} מוריד את סיכויי הניצחון ב־{ans['drop']:.0f}%. הטוב ביותר: {best}. "
-                                 f"ממשיכים עם {best}.", icon=":material/cancel:")
-                    st.button("המשך", type="primary", on_click=tr_continue, args=(board,), width="stretch",
-                              icon=":material/arrow_back:")
-            elif turn == "opp":
-                md('<div class="card-h"><span class="t" style="font-size:1.15rem">תור היריב: איך הוא עונה?</span></div>'
-                   '<div class="note">בחרו תגובה (או גררו אותה על הלוח). אחר כך אפשר לחזור ולנסות תגובה אחרת.</div>')
+            options = [dict(uci=o["uci"], label=o["san"], sub=" · ".join(o["tags"])) for o in opp]
+            interactive, allow = True, {o["uci"] for o in opp}
+        sig = abs(hash(st.session_state.get("tr_sig")))
+        val = chess_board(board, color, key=f"trb_{sig}_{len(sans)}_{turn}_{int(bool(ans))}", arrows=arrows,
+                          last=last, options=options, interactive=interactive, allow=allow, size=400, side=True)
+        mv = fresh_move(val, "tr_token", board) if interactive else None
+        if mv and turn == "me":
+            tr_answer(board, info, mv, color)
+            st.rerun()
+        elif mv and turn == "opp":
+            tr_opp_pick(mv)
+            st.rerun()
+        if sans:
+            md(line_html(sans, p["ply"], len(sans)))
+
+        if turn == "me" and ans:
+            chosen = board.san(chess.Move.from_uci(ans["uci"]))
+            best = board.san(chess.Move.from_uci(ans["best"]))
+            if ans["is_best"]:
+                st.success(f"נכון! {chosen} הוא המסע הטוב ביותר.", icon=":material/check_circle:")
+            elif ans["ok"]:
+                st.success(f"גם טוב: {chosen} רק {ans['drop']:.0f}% פחות מ־{best}. ממשיכים עם המסע שלך.",
+                           icon=":material/check_circle:")
             else:
-                log = st.session_state.tr_log
-                own = [l for l in log if l.get("reason") != "mine"]
-                ok = sum(l["ok"] for l in own)
-                rows = "".join(
-                    f'<tr><td>{"✓" if l["ok"] else "✗"}</td><td><span class="ltr">{esc(l["chosen"])}</span></td>'
-                    f'<td>{"" if l["ok"] else en(l["best"])}</td></tr>' for l in own)
-                md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">סוף הקו: {ok} מתוך {len(own)} נכונים</span></div>'
-                   f'<div class="level">{TR_STOP.get(st.session_state.tr_stop, "")}</div>'
-                   f'<table class="replies"><tr><th></th><th>בחרת</th><th>הטוב ביותר</th></tr>{rows}</table>')
-                c1, c2 = st.columns(2)
-                if st.session_state.tr_snaps:
-                    c1.button("תגובה אחרת של היריב", on_click=tr_back, width="stretch", icon=":material/alt_route:")
-                c2.button("מההתחלה", on_click=tr_reset, args=(key, mine_first, p), width="stretch", icon=":material/replay:")
+                st.error(f"{chosen} מוריד את סיכויי הניצחון ב־{ans['drop']:.0f}%. הטוב ביותר: {best}. "
+                         f"ממשיכים עם {best}.", icon=":material/cancel:")
+            st.button("המשך", type="primary", on_click=tr_continue, args=(board,), icon=":material/arrow_back:")
+        elif turn == "done":
+            log = st.session_state.tr_log
+            own = [l for l in log if l.get("reason") != "mine"]
+            ok = sum(l["ok"] for l in own)
+            rows = "".join(
+                f'<tr><td>{"✓" if l["ok"] else "✗"}</td><td><span class="ltr">{esc(l["chosen"])}</span></td>'
+                f'<td>{"" if l["ok"] else en(l["best"])}</td></tr>' for l in own)
+            md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">סוף הקו: {ok} מתוך {len(own)} נכונים</span></div>'
+               f'<div class="level">{TR_STOP.get(st.session_state.tr_stop, "")}</div>'
+               f'<table class="replies"><tr><th></th><th>בחרת</th><th>הטוב ביותר</th></tr>{rows}</table>')
+            c1, c2 = st.columns(2)
+            if st.session_state.tr_snaps:
+                c1.button("תגובה אחרת של היריב", on_click=tr_back, width="stretch", icon=":material/alt_route:")
+            c2.button("מההתחלה", on_click=tr_reset, args=(key, mine_first, p), width="stretch", icon=":material/replay:")
+    if not C.lichess_token() and not st.session_state.get("tr_token_note_shown"):
+        st.session_state.tr_token_note_shown = True   # once per session, not on every move
+        st.caption("בלי טוקן של Lichess האימון עובד רק לפי המנוע (בלי \"נפוץ ברמה שלך\" ובלי מסד המאסטרים).")

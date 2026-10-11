@@ -13,6 +13,10 @@ from .common import COLORS, SPEEDS, STATUS_ME, STATUS_OTHER, en, ltr_label, md
 from .ctx import ctx
 from .data import data_stamp, get_data, job_state, start_analysis
 
+def _reset_drill():
+    st.session_state.update(mk_drill=False, quiz=False)
+
+
 SENSITIVITY = {20: "רק טעויות גסות", 12: "רגיל", 8: "גם אי־דיוקים"}
 SENSITIVITY_HELP = {20: "מסעים שמורידים הרבה מהסיכויים", 12: "מומלץ", 8: "יותר טעויות, חלקן קטנות"}
 
@@ -67,17 +71,45 @@ def add_player(name, n, run_engine=True):
 
 
 def settings_controls(pop, players):
-    """Draw the controls inside `pop`; returns the selection (player, colours, threshold, speeds, data)."""
+    """Draw the controls inside `pop`; returns the selection (player, colours, threshold, speeds, data).
+    Order: what is changed most often first (player, colour, sensitivity, token), then collapsed sections."""
     with pop:
         user = st.selectbox("שחקן", players, key="user",
-                            format_func=lambda u: f"{u} (אני)" if u == C.USER.lower() else u)
-        with st.expander(ltr_label("הורדת המשחקים האחרונים של ", user, " מ־Lichess"), icon=":material/download:"):
-            st.caption(ltr_label("מורידים מחדש את המשחקים האחרונים מ־", "Lichess") +
-                       ". משחקים חדשים נכנסים לעץ ולסטטיסטיקות, ועמדות שכבר נותחו לא מנותחות שוב.")
+                            format_func=lambda u: f"{u} (אני)" if u == C.USER.lower() else u, on_change=_reset_drill)
+        me = user == C.USER.lower()
+        pick = st.segmented_control("אני משחק עם" if me else "צבע", ["all", "white", "black"], default="all",
+                                    key="f_color", format_func={"all": "שני הצבעים", **COLORS}.get, width="stretch",
+                                    on_change=_reset_drill)
+        colors = [pick] if pick in COLORS else list(COLORS)
+        if st.session_state.get("thr") not in SENSITIVITY:  # a value left over from the old slider
+            st.session_state.thr = C.ERROR_WIN_DROP
+        thr = st.radio("רגישות: כמה גדולה טעות צריכה להיות", list(SENSITIVITY), key="thr",
+                       format_func=SENSITIVITY.get, captions=[SENSITIVITY_HELP[v] for v in SENSITIVITY],
+                       on_change=_reset_drill,
+                       help="\"רק טעויות גסות\" מציג מסעים שמורידים את סיכויי הניצחון בלפחות 20 נקודות אחוז, "
+                            "\"רגיל\" 12, \"גם אי־דיוקים\" 8. השינוי מיידי, בלי להריץ שוב את המנוע.")
+        if C.lichess_token():
+            st.markdown('<span class="pill green">מחובר ל־Lichess</span>', unsafe_allow_html=True)
+        else:
+            st.markdown('<span class="pill gray">לא מחובר</span> טוקן Lichess מוסיף את "מה משחקים ברמה שלך". '
+                        'איך מחברים? ראו README.', unsafe_allow_html=True)
+        stamp = data_stamp(user)
+        analyzed = bool(stamp and stamp[2])
+        engine_panel(user, analyzed, stamp)
+        df, all_errors = get_data(user, stamp, thr)
+        avail = [s for s in SPEEDS if s in set(df.speed)] + sorted(set(df.speed) - set(SPEEDS))
+        if len(avail) > 1:
+            speeds = st.multiselect("קצב משחק", avail, avail, format_func=lambda s: SPEEDS.get(s, s), key=f"speeds_{user}")
+        else:
+            speeds = avail
+        with st.expander("ניהול משחקים", icon=":material/download:"):
+            st.markdown(ltr_label("הורדה מחדש של המשחקים האחרונים של ", user, " מ־Lichess"))
+            st.caption("משחקים חדשים נכנסים לעץ ולסטטיסטיקות, ועמדות שכבר נותחו לא מנותחות שוב.")
             n_refresh = st.segmented_control("כמה משחקים אחרונים", [200, 500, 1000], default=500, key="refresh_n")
             if st.button("הורד ועדכן", key="refresh_games", icon=":material/refresh:", width="stretch"):
                 add_player(user, n_refresh or 500, True)
-        with st.expander(ltr_label("הוספת שחקן מ־", "Lichess"), icon=":material/person_add:"):
+            st.divider()
+            st.markdown(ltr_label("הוספת שחקן מ־", "Lichess"))
             with st.form("add_player", border=False, clear_on_submit=True):
                 name = st.text_input(ltr_label("שם משתמש ב־", "Lichess"), placeholder="DrNykterstein", key="add_name")
                 n_games = st.segmented_control("כמה משחקים אחרונים", [200, 500, 1000], default=500)
@@ -87,45 +119,19 @@ def settings_controls(pop, players):
                 go_add = st.form_submit_button("הורד ונתח", type="primary", width="stretch")
             if go_add and name.strip():
                 add_player(name, n_games or 500, run_engine)
-        me = user == C.USER.lower()
-        stamp = data_stamp(user)
-        analyzed = bool(stamp and stamp[2])
-        engine_panel(user, analyzed, stamp)
-        if C.lichess_token():
-            st.markdown('<span class="pill green">מחובר ל־Lichess</span>', unsafe_allow_html=True)
-        else:
-            st.markdown('<span class="pill gray">לא מחובר</span> טוקן Lichess מוסיף את "מה משחקים ברמה שלך". '
-                        'איך מחברים? ראו README.', unsafe_allow_html=True)
-        st.divider()
-        pick = st.segmented_control("אני משחק עם" if me else "צבע", ["all", "white", "black"], default="all",
-                                    key="f_color", format_func={"all": "שני הצבעים", **COLORS}.get, width="stretch")
-        colors = [pick] if pick in COLORS else list(COLORS)
-        if st.session_state.get("thr") not in SENSITIVITY:  # a value left over from the old slider
-            st.session_state.thr = C.ERROR_WIN_DROP
-        thr = st.radio("רגישות: כמה גדולה טעות צריכה להיות", list(SENSITIVITY), key="thr",
-                       format_func=SENSITIVITY.get, captions=[SENSITIVITY_HELP[v] for v in SENSITIVITY],
-                       help="\"רק טעויות גסות\" מציג מסעים שמורידים את סיכויי הניצחון בלפחות 20 נקודות אחוז, "
-                            "\"רגיל\" 12, \"גם אי־דיוקים\" 8. השינוי מיידי, בלי להריץ שוב את המנוע.")
-        df, all_errors = get_data(user, stamp, thr)
-        avail = [s for s in SPEEDS if s in set(df.speed)] + sorted(set(df.speed) - set(SPEEDS))
-        if len(avail) > 1:
-            speeds = st.multiselect("קצב משחק", avail, avail, format_func=lambda s: SPEEDS.get(s, s), key=f"speeds_{user}")
-        else:
-            speeds = avail
-            st.caption(f"כל המשחקים בקצב {SPEEDS.get(avail[0], avail[0])}." if avail else "")
-        st.divider()
         status = STATUS_ME if me else STATUS_OTHER
+        who = "שלך" if me else "של השחקן"
         with st.expander("מילון מונחים", icon=":material/help:"):
             md(f"""<dl class="gloss">
 <dt>אחוז נקודות</dt><dd>ניצחון = נקודה, תיקו = חצי. 50% = מאזן שוויוני.</dd>
-<dt>טעות בפתיחה</dt><dd>מסע ב‑{C.ANALYZE_PLIES // 2} המסעים הראשונים שלך שמוריד את סיכויי הניצחון ב‑{thr}% או יותר (לפי הרגישות שנבחרה). מסע שהוא המסע של המנוע אף פעם לא נחשב טעות.
-מסעים שהם חלק מקו הפתיחה שאתה משחק קבוע (למשל גמביט) לא נחשבים טעות.</dd>
-<dt>נקודות שאבדו</dt><dd>כמה נקודות הפתיחה עלתה לך לעומת הממוצע שלך באותו צבע: משחקים × (הממוצע − אחוז הנקודות בפתיחה).</dd>
-<dt>פתיחה בעייתית</dt><dd>אחוז נקודות נמוך ב‑{C.TOXIC_MARGIN:.0%} לפחות מהממוצע שלך באותו צבע, טעות עד מסע {C.EARLY_ERROR_MOVE} ב‑{C.EARLY_ERROR_SHARE:.0%} או יותר מהמשחקים,
+<dt>טעות בפתיחה</dt><dd>מסע ב‑{C.ANALYZE_PLIES // 2} המסעים הראשונים שמוריד את סיכויי הניצחון ב‑{thr}% או יותר (לפי הרגישות שנבחרה). מסע שהוא המסע של המנוע אף פעם לא נחשב טעות.
+מסעים שהם חלק מקו פתיחה שמשחקים קבוע (למשל גמביט) לא נחשבים טעות.</dd>
+<dt>נקודות שאבדו</dt><dd>כמה נקודות הפתיחה עלתה לעומת הממוצע {who} באותו צבע: משחקים × (הממוצע − אחוז הנקודות בפתיחה).</dd>
+<dt>פתיחה בעייתית</dt><dd>אחוז נקודות נמוך ב‑{C.TOXIC_MARGIN:.0%} לפחות מהממוצע {who} באותו צבע, טעות עד מסע {C.EARLY_ERROR_MOVE} ב‑{C.EARLY_ERROR_SHARE:.0%} או יותר מהמשחקים,
 וגם אותה טעות בדיוק ב‑{C.MIN_PROBLEM_GAMES} משחקים לפחות.</dd>
 <dt>טעות חוזרת</dt><dd>אותו מסע שגוי באותה עמדה ב‑{C.MIN_PROBLEM_GAMES} משחקים או יותר (ב‑2 משחקים כשאין כאלה).</dd>
 <dt>טעות שנלמדה</dt><dd>{status["learned"][2]}</dd>
-<dt>ייתכן מקרי</dt><dd>ההבדל מהממוצע קטן או מבוסס על מעט משחקים, ולכן אפשר שהוא מקרי.</dd>
+<dt>מוקדם לדעת</dt><dd>ההבדל מהממוצע קטן או מבוסס על מעט משחקים, ולכן אפשר שהוא מקרי.</dd>
 </dl>""")
             st.caption(f"ניתוח המנוע: Stockfish בעומק {C.ENGINE_DEPTH} קבוע לכל עמדה. "
                        f"פתיחה מוצגת רק אם שוחקה {C.MIN_GROUP_GAMES}+ פעמים.")

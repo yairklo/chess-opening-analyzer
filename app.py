@@ -16,12 +16,13 @@ from ui.quiz import page_quiz  # noqa: E402
 from ui.repertoire import page_repertoire  # noqa: E402
 from ui.settings import settings_controls, settings_stats  # noqa: E402
 
-PAGES = {"home": "התוכנית שלי", "mistakes": "טעויות", "repertoire": "הפתיחות שלי"}
+PAGES = {"home": "התוכנית", "mistakes": "טעויות", "repertoire": "הפתיחות"}
+PAGES_MINE = {"home": "התוכנית שלי", "mistakes": "טעויות", "repertoire": "הפתיחות שלי"}
 SCREENS = {"home": page_home, "mistakes": page_mistakes, "repertoire": page_repertoire}
 
 
 def leave_quiz():
-    st.session_state.quiz = False
+    st.session_state.update(quiz=False, mk_drill=False)
 
 
 inject_css()
@@ -40,7 +41,8 @@ if st.session_state.get("page") not in PAGES:
 with st.container(key="topbar"):
     c_brand, c_nav, c_who, c_gear = st.columns([1.5, 3.6, 2.6, 1.3], vertical_alignment="center")
 c_brand.markdown('<span class="brand-top">♞ ניתוח פתיחות</span>', unsafe_allow_html=True)
-page = c_nav.segmented_control("ניווט", list(PAGES), key="page", format_func=PAGES.get, label_visibility="collapsed",
+labels = PAGES_MINE if st.session_state.get("user", players[0]) == C.USER.lower() else PAGES
+page = c_nav.segmented_control("ניווט", list(PAGES), key="page", format_func=labels.get, label_visibility="collapsed",
                                on_change=leave_quiz)
 pop = c_gear.popover("הגדרות", icon=":material/settings:", width="stretch")
 head = c_who

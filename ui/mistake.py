@@ -7,10 +7,11 @@ from chessapp import config as C
 from chessapp.lines import study_pgn
 
 from .names import en_sub
-from .common import (COLORS, GREEN, LRM, RED, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
+from .common import (COLORS, GREEN, LRM, RED, RESULTS, moves_html, position_at, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
                      game_links, line_html, md, move_label, pct, rtl_table, set_state, status_map, you)
 from .ctx import ctx
-from .data import (by_cost, explain_p, find_mistake, level_html, level_view, list_mistakes, start_analysis, tr_key)
+from .data import explain_p, find_mistake, level_html, level_view, start_analysis, tr_key
+from .plan import ordered_mistakes
 from .trainer import drill
 
 
@@ -69,13 +70,16 @@ def line_board(p, x):
             b, last = start.copy(), None
             for san in sans[:cur]:
                 last = b.push_san(san)
-            st.image(board_svg(b, p["color"], last, size=420), width=420)
+            st.image(board_svg(b, p["color"], last, size=380), width=380)
             c = st.columns(4)
-            c[0].button("»", key=f"{pk}_e", on_click=set_state, args=(pk, len(sans)), disabled=cur >= len(sans), width="stretch")
-            c[1].button("›", key=f"{pk}_n", on_click=set_state, args=(pk, min(len(sans), cur + 1)),
-                        disabled=cur >= len(sans), width="stretch")
-            c[2].button("‹", key=f"{pk}_p", on_click=set_state, args=(pk, max(0, cur - 1)), disabled=cur == 0, width="stretch")
-            c[3].button("«", key=f"{pk}_s", on_click=set_state, args=(pk, 0), disabled=cur == 0, width="stretch")
+            c[0].button("»", key=f"{pk}_s", on_click=set_state, args=(pk, 0), disabled=cur == 0, width="stretch",
+                        help="להתחלה")
+            c[1].button("›", key=f"{pk}_p", on_click=set_state, args=(pk, max(0, cur - 1)), disabled=cur == 0,
+                        width="stretch", help="אחורה")
+            c[2].button("‹", key=f"{pk}_n", on_click=set_state, args=(pk, min(len(sans), cur + 1)),
+                        disabled=cur >= len(sans), width="stretch", help="קדימה")
+            c[3].button("«", key=f"{pk}_e", on_click=set_state, args=(pk, len(sans)), disabled=cur >= len(sans),
+                        width="stretch", help="לסוף")
         st.segmented_control("על הלוח", ["mistake", "better", "punish"], default="mistake", key=f"{k}_mode",
                              format_func={"mistake": "הטעות", "better": "הקו הנכון", "punish": "העונש"}.get,
                              label_visibility="collapsed", width="stretch")
@@ -83,8 +87,9 @@ def line_board(p, x):
             md(arrow_legend())
         elif sans:
             intro = ("הקו של המנוע אחרי המסע הנכון:" if mode == "better"
-                     else f'מה קורה אחרי {move_label(p["ply"], p["played"])}, לפי המנוע:')
-            md(f'<div class="note" style="margin-top:6px">{intro}</div>' + line_html(sans, first_ply, cur))
+                     else f'מה קורה אחרי <bdi dir="ltr">{esc(move_label(p["ply"], p["played"]))}</bdi>, לפי המנוע:')
+            md(f'<div class="note" style="margin-top:6px">{intro}</div>'
+               f'<div style="overflow-x:auto;white-space:nowrap">{line_html(sans, first_ply, cur)}</div>')
 
 
 def select(key):
@@ -105,7 +110,8 @@ def lower_sensitivity():
 
 def _items():
     """Mistakes to walk through: repeated ones (2+ games), or all of them when asked; the selected one is always in."""
-    items = by_cost(ctx.probs) if st.session_state.get("mk_all") else list_mistakes()
+    base = ctx.probs if st.session_state.get("mk_all") else [p for p in ctx.probs if p["count"] >= 2]
+    items = ordered_mistakes(base)
     sel = st.session_state.get("mk_sel")
     if sel and not any(tr_key(p) == sel for p in items):
         p = find_mistake(sel)
@@ -114,9 +120,11 @@ def _items():
     return items
 
 
-def _top_bar(items, idx):
+def _top_bar(items, idx, drilling=False):
     keys = [tr_key(p) for p in items]
-    a, b, c = st.columns([2.2, 1.6, 4], vertical_alignment="center")
+    a, b, back, c = st.columns([2.2, 1.6, 1.8 if drilling else 0.01, 3.4], vertical_alignment="center")
+    if drilling:
+        back.button("→ חזרה לטעות", key="mk_back", on_click=stop_drill)
     a.markdown(f'<span class="mk-crumb">טעות</span> **{idx + 1} מתוך {len(items)}**', unsafe_allow_html=True)
     with b:
         x, y = st.columns(2)
@@ -154,6 +162,23 @@ def _all_mistakes(items, idx, where):
             st.rerun()
 
 
+def _game_viewer(p):
+    """Pick one of the games and step through it up to the mistake."""
+    games = ctx.fdf[ctx.fdf.id.isin(p["games"])].sort_values("created", ascending=False)
+    if games.empty:
+        return
+    label = {r.id: f"{fmt_date(r.created)} · {RESULTS[r.result]}" for r in games.itertuples()}
+    gid = st.selectbox("משחק", list(label), format_func=label.get, key=f"gv_game_{tr_key(p)}")
+    moves = games[games.id == gid].moves.iat[0].split()
+    last = min(p["ply"] - 1, len(moves))
+    ply = st.slider("מסע", 0, last, last, key=f"gv_ply_{tr_key(p)}_{gid}",
+                    help="גוררים כדי לעבור על המשחק עד הרגע שבו טעית")
+    board, lastmove = position_at(moves, ply)
+    at_mistake = ply == p["ply"] - 1
+    st.image(board_svg(board, p["color"], lastmove, [(p["played_uci"], RED)] if at_mistake else [], size=340), width=340)
+    md(moves_html(moves[:last], cur=ply or None))
+
+
 def _details(p, x, lv):
     with st.expander(f"מה קרה במשחקים שלך ({p['count']})"):
         md(f'<div class="stats s3"><div><div class="k">{you("חזרת על הטעות", "חזרות על הטעות")}</div>'
@@ -164,6 +189,7 @@ def _details(p, x, lv):
            f'{replies_html(p, x["punish_first"])}'
            f'<div class="note" style="margin-top:10px">{usual_html(p)}</div>'
            f'<div class="note" style="margin-top:10px">המשחקים:</div>{game_links(p["games"], p["color"], p["ply"])}')
+        _game_viewer(p)
     with st.expander("מה משחקים ברמה שלך"):
         if lv and lv.get("ex"):
             md(level_html(p, lv) + explorer_html(lv["ex"], p["color"]))
@@ -202,11 +228,10 @@ def page_mistakes():
     idx = keys.index(sel) if sel in keys else 0
     st.session_state.mk_sel = keys[idx]
     p = items[idx]
-    where = _top_bar(items, idx)
+    drilling = bool(st.session_state.get("mk_drill") and ctx.me)
+    where = _top_bar(items, idx, drilling)
     _all_mistakes(items, idx, where)
-    if st.session_state.get("mk_drill") and ctx.me:
-        st.button("→ חזרה לטעות", key="mk_back", on_click=stop_drill)
-        md(f'<div class="card-h">{chip(p["color"])}<span class="t">{en(p["opening"])}</span></div>')
+    if drilling:
         drill(p)
         return
 

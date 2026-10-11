@@ -40,11 +40,13 @@ def _arrow(uci, color):
     return {"from": uci[:2], "to": uci[2:4], "color": color}
 
 
-def chess_board(board, color, *, key, arrows=(), last=None, options=(), interactive=True, allow=None, size=460):
+def chess_board(board, color, *, key, arrows=(), last=None, options=(), interactive=True, allow=None, size=460,
+                side=False):
     """Draw `board` from `color`'s side. `arrows`: [(uci, "#rrggbb")]; `options`: [{"uci", "label", "sub"?}] shown
-    as buttons under the board; `allow`: restrict draggable moves to these UCIs (default: every legal move)."""
+    as buttons under the board (or beside it with `side=True`); `allow`: restrict draggable moves to these UCIs
+    (default: every legal move)."""
     return _component(
-        fen=board.fen(), orientation=color, size=size, interactive=bool(interactive),
+        fen=board.fen(), orientation=color, size=size, side=bool(side), interactive=bool(interactive),
         legal=legal_map(board, allow) if interactive else {}, pieces=_pieces(),
         arrows=[_arrow(u, c[:7]) for u, c in arrows if u],
         last=[chess.square_name(last.from_square), chess.square_name(last.to_square)] if last else None,

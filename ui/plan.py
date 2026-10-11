@@ -5,7 +5,7 @@ from chessapp import config as C
 
 from .common import CONF, en, esc, move_label, pct
 from .ctx import ctx
-from .data import by_cost, level_view, recurring
+from .data import by_cost, level_view, recurring, tr_key
 
 
 def focus_openings(n):
@@ -112,3 +112,10 @@ def node_games(op):
     pre = op.group.split()
     fdf = ctx.fdf
     return fdf[(fdf.color == op.color) & fdf.line.str.split().map(lambda s: s[:len(pre)] == pre)]
+
+
+def ordered_mistakes(items):
+    """`items` with the plan's mistakes first (same order as the home page), then the rest by cost."""
+    plan = [p for kind, p in plan_items() if kind == "mistake"]
+    keys = {tr_key(p) for p in plan}
+    return plan + [p for p in by_cost(items) if tr_key(p) not in keys]

@@ -28,6 +28,11 @@
   .opt small { display: block; font-family: Heebo, system-ui, sans-serif; font-weight: 400; font-size: .72rem; color: #6b7280; margin-top: 2px; }
   .opt:hover { border-color: #2563eb; background: #eff6ff; box-shadow: 0 0 0 2px rgba(37, 99, 235, .18); }
   .hint { font-size: .78rem; color: #6b7280; margin-top: 8px; text-align: center; }
+  .side { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .side .bcol { flex: 0 0 auto; }
+  .side .ocol { flex: 1 1 200px; min-width: 190px; }
+  .side .opts { grid-template-columns: 1fr; margin-top: 0; }
+  .side .hint { text-align: right; }
 </style>
 </head>
 <body>
@@ -99,8 +104,10 @@
     const pieces = parseFen(P.fen);
     const legal = P.interactive ? (P.legal || {}) : {};
     const root = document.getElementById("root");
-    root.style.width = Math.min(P.size, window.innerWidth) + "px";
-    let h = '<div class="boardwrap' + (P.interactive ? " interactive" : "") + '"><div class="board" id="board">';
+    const side = !!P.side;
+    root.style.width = Math.min(side ? P.size + 320 : P.size, window.innerWidth) + "px";
+    let h = side ? '<div class="side"><div class="bcol" style="width:' + Math.min(P.size, window.innerWidth) + 'px">' : "";
+    h += '<div class="boardwrap' + (P.interactive ? " interactive" : "") + '"><div class="board" id="board">';
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
         const name = sqName(col, row);
@@ -122,6 +129,7 @@
       }
     }
     h += "</div>" + arrowSvg(allArrows()) + "</div>";
+    if (side) h += '</div><div class="ocol">';
     if (P.options && P.options.length) {
       h += '<div class="opts">';
       P.options.forEach((o, i) => {
@@ -130,6 +138,7 @@
       h += "</div>";
       if (P.interactive) h += '<div class="hint">אפשר גם לגרור כלי על הלוח, או ללחוץ על כלי ואז על משבצת</div>';
     }
+    if (side) h += "</div></div>";
     root.innerHTML = h;
     root.querySelectorAll(".piece").forEach((el) => { el.style.backgroundImage = pieceUrl(el.getAttribute("data-p")); });
     bind();

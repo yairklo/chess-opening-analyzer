@@ -50,8 +50,9 @@ def open_mistake(key):
     st.session_state.update(page="mistakes", mk_sel=key, mk_drill=False, quiz=False)
 
 
+TREE_ROWS = 10
 CONF_HE = {"high": ("בטוח", "green"), "mid": ("כנראה", "amber"), "low": ("מוקדם לדעת", "gray")}
-CONF_HELP = ("ההבדל מהממוצע שלך: \"בטוח\" = הרבה משחקים והבדל ברור, \"כנראה\" = סביר, "
+CONF_HELP = ("ההבדל מהממוצע: \"בטוח\" = הרבה משחקים והבדל ברור, \"כנראה\" = סביר, "
              "\"מוקדם לדעת\" = מעט משחקים או הבדל קטן, ואפשר שהוא מקרי.")
 
 
@@ -100,7 +101,16 @@ def _summary(c):
 
 def _tree_table(c):
     tbl = ctx.tbl
-    t = tbl[tbl.color == c].reset_index(drop=True)
+    full = tbl[tbl.color == c].reset_index(drop=True)
+    show_all = bool(st.session_state.get("rp_all"))
+    sel = st.session_state.get("op_key")
+    if sel not in set(full.key):  # first visit: the line that costs the most points
+        top = focus_openings(1)
+        top = top[top.color == c]
+        sel = top.key.iat[0] if len(top) else full.key.iat[0]
+    t = full if show_all or len(full) <= TREE_ROWS else full.head(TREE_ROWS)
+    if sel not in set(t.key):
+        t = pd.concat([t, full[full.key == sel]]).reset_index(drop=True)
     names = []
     for r in t.itertuples():
         nm = clip(short_name(r), max(14, 30 - 2 * r.depth)) + ("  ⚠" if r.toxic else "")
@@ -109,7 +119,7 @@ def _tree_table(c):
     view = pd.DataFrame({
         "פתיחה": [LRM + n for n in names], "משחקים": t.games, "ציון": t.score * 100,
         "מול הממוצע": (t.score - t.base) * 100, "משחקים עם טעות": with_error})
-    key = f"op_table_{c}_{st.session_state.get('op_nonce', 0)}_{st.session_state.get('op_key', '')}"
+    key = f"op_table_{c}_{st.session_state.get('op_nonce', 0)}_{int(show_all)}"
     ev = rtl_table(view, on_select="rerun", selection_mode="single-row", key=key, height=min(38 + 35 * len(view), 420),
                    column_config={
                        "פתיחה": st.column_config.TextColumn(width=320, alignment="right",
@@ -122,13 +132,11 @@ def _tree_table(c):
                            help=you("לעומת הממוצע שלך באותו צבע", "לעומת הממוצע של השחקן באותו צבע")),
                        "משחקים עם טעות": st.column_config.NumberColumn(width=110)})
     if ev.selection.rows:
-        st.session_state.op_key = t.key.iat[ev.selection.rows[0]]
-    sel = st.session_state.get("op_key")
-    if sel not in set(t.key):  # first visit: the line that costs the most points
-        top = focus_openings(1)
-        top = top[top.color == c]
-        sel = top.key.iat[0] if len(top) else t.key.iat[0]
-    return t[t.key == sel].iloc[0]
+        sel = t.key.iat[ev.selection.rows[0]]
+        st.session_state.op_key = sel
+    if len(full) > TREE_ROWS:
+        st.toggle(f"הצג את כל הפתיחות ({len(full)})", key="rp_all")
+    return full[full.key == sel].iloc[0]
 
 
 def _node_mistakes(op):
@@ -147,10 +155,14 @@ def _node_mistakes(op):
         ids = set(node_games(op).id)
         found = sorted((p for p in ctx.probs if p["color"] == op.color and ids & set(p["games"])
                         and p["status"] != "learned"), key=lambda p: (-p["count"], -p["cost"]))
-        md(f'<div class="plan-title" style="margin-top:14px;font-size:1rem">הטעויות בפתיחה הזו ({len(found)})</div>')
-        if not found:
-            md('<div class="note">אין כאן טעויות פתוחות ברגישות הנוכחית.</div>')
+        repeated = [p for p in found if p["count"] >= 2]
+        singles = len(found) - len(repeated)
+        md(f'<div class="plan-title" style="margin-top:14px;font-size:1rem">טעויות שחוזרות בפתיחה הזו ({len(repeated)})</div>')
+        if not repeated:
+            md('<div class="note">אין כאן טעויות שחוזרות ברגישות הנוכחית'
+               + (f' ({singles} טעויות חד־פעמיות).' if singles else ".") + '</div>')
             return
+        found = repeated
         top = found[0]
         a, b = st.columns([1, 2], vertical_alignment="center")
         a.image(board_svg(chess.Board(top["fen"]), top["color"], None,
@@ -162,14 +174,16 @@ def _node_mistakes(op):
                f'ב־{top["mistakes"]} מתוך {top["reached"]} משחקים</div>')
             st.button("לפתוח את הטעות ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),),
                       type="primary")
-        for i, p in enumerate(found[1:8], 1):
+        for i, p in enumerate(found[1:3], 1):
             a, b, c = st.columns([4, 2, 1.4], vertical_alignment="center")
             a.markdown(f'<span dir="ltr">{esc(move_label(p["ply"], p["played"]))}</span> ← '
                        f'<span dir="ltr">{esc(move_label(p["ply"], p["best_san"] or "?"))}</span>', unsafe_allow_html=True)
             b.caption(f'{status_map()[p["status"]][0]} · ' + (f'{p["count"]} פעמים' if p["count"] > 1 else "פעם אחת"))
             c.button("לטעות ←", key=f"rp_mk_{op.key}_{i}", on_click=open_mistake, args=(tr_key(p),), width="stretch")
-        if len(found) > 8:
-            st.caption(f"ועוד {len(found) - 8} טעויות. אפשר לראות את כולן במסך הטעויות.")
+        more = len(found) - 3
+        if more > 0 or singles:
+            st.caption((f"ועוד {more} שחוזרות" if more > 0 else "") + (" · " if more > 0 and singles else "")
+                       + (f"ועוד {singles} חד־פעמיות" if singles else "") + ". אפשר לראות את כולן במסך הטעויות.")
 
 
 def page_repertoire():
@@ -184,7 +198,7 @@ def page_repertoire():
     t = ctx.tbl[ctx.tbl.color == c]
     games = int((ctx.fdf.color == c).sum())
     head.markdown(f'<h1 class="plan-h1" style="margin-top:0">{you("הפתיחות שלך", "הפתיחות של " + esc(ctx.user))}</h1>'
-                  f'<p class="plan-sub">איך אתה מצליח בכל פתיחה לעומת הממוצע שלך ב{COLORS[c]} '
+                  f'<p class="plan-sub">{you("איך אתה מצליח", "איך מצליח השחקן")} בכל פתיחה לעומת {you("הממוצע שלך", "הממוצע שלו")} ב{COLORS[c]} '
                   f'({pct(t.base.iat[0])} ב־{games:,} משחקים).</p>', unsafe_allow_html=True)
     _summary(c)
     md('<div class="sec"><h3>כל הפתיחות</h3><p>בחרו שורה כדי לראות את הטעויות בה.</p></div>')

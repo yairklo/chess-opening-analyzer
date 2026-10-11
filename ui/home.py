@@ -16,7 +16,8 @@ def open_mistake(key):
 
 
 def open_opening(key):
-    st.session_state.update(page="repertoire", op_key=key, quiz=False)
+    st.session_state.update(page="repertoire", op_key=key, quiz=False, rp_all=False,
+                            op_nonce=st.session_state.get("op_nonce", 0) + 1)
 
 
 def go_repertoire():
@@ -52,7 +53,7 @@ def mistake_card(i, p):
         md(f'<div class="plan-line">{you("שיחקת", "שוחק")} <b class="ltr">{esc(move_label(p["ply"], p["played"]))}</b> '
            f'ב־{p["mistakes"]} מתוך {p["reached"]} משחקים</div>'
            f'<div class="plan-line">עדיף <b class="ltr">{esc(move_label(p["ply"], p["best_san"] or "?"))}</b></div>'
-           f'<div class="plan-reason">{esc(short_reason(x["why"], 16))}</div>')
+           f'<div class="plan-reason">{esc(x.get("why_short") or short_reason(x["why"], 16))}</div>')
         st.button("לתקן עכשיו ←", key=f"fix_{i}", on_click=open_mistake, args=(tr_key(p),), type="primary",
                   width="stretch")
 
@@ -62,7 +63,7 @@ def opening_card(i, r):
         md(card_head(i, he_title(r.opening), en_sub(r.opening, COLORS[r.color])))
         md(f'<div style="margin:8px 0"><span class="pill amber">פתיחה חלשה</span></div>'
            f'<div class="moves">{esc(tail_moves(r.group, 30))}</div>'
-           f'<div class="plan-reason">התוצאות כאן נמוכות מהממוצע שלך: {pct(r.score)} לעומת {pct(r.base)}.</div>')
+           f'<div class="plan-reason">התוצאות כאן נמוכות מהממוצע {you("שלך", "של השחקן")}: {pct(r.score)} לעומת {pct(r.base)}.</div>')
         st.button("לפתיחה ←", key=f"open_{i}", on_click=open_opening, args=(r.key,), width="stretch")
 
 
@@ -70,7 +71,7 @@ def where_points_go():
     top = focus_openings(3)
     with st.container(border=True, key="card_focus"):
         h, link = st.columns([3, 1.6], vertical_alignment="center")
-        h.markdown('<div class="plan-title">איפה אתה מפסיד נקודות</div>', unsafe_allow_html=True)
+        h.markdown('<div class="plan-title">איפה מפסידים נקודות</div>', unsafe_allow_html=True)
         link.button("לכל הפתיחות ←", key="to_repertoire", on_click=go_repertoire, type="tertiary")
         if top.empty:
             md(f'<div class="note">{you("אין פתיחה שמורידה את הממוצע שלך. יפה!", "אין פתיחה שמורידה את הממוצע באופן בולט.")}</div>')
@@ -90,7 +91,7 @@ def progress_card():
     counts = {s: sum(p["status"] == s for p in rec) for s in ("repeating", "improving", "learned")}
     total = sum(counts.values())
     with st.container(border=True, key="card_progress"):
-        md('<div class="plan-title">ההתקדמות שלך</div>')
+        md(f'<div class="plan-title">ההתקדמות {you("שלך", "של השחקן")}</div>')
         if not total:
             md('<div class="note">עוד אין טעויות חוזרות שאפשר לעקוב אחריהן.</div>')
             return
@@ -104,8 +105,12 @@ def progress_card():
 
 
 def page_home():
-    md('<h1 class="plan-h1">מה לתקן השבוע</h1>'
-       '<p class="plan-sub">שלוש הטעויות שחוזרות אצלך ועולות לך הכי הרבה נקודות. כל אחת לוקחת בערך 5 דקות.</p>')
+    if ctx.analyzed:
+        sub_txt = (f"שלוש הטעויות שחוזרות {you('אצלך', 'אצל ' + esc(ctx.user))} ועולות "
+                   f"{you('לך', 'לו')} הכי הרבה נקודות. כל אחת לוקחת בערך 5 דקות.")
+    else:
+        sub_txt = f"הפתיחות שעולות {you('לך', 'ל' + esc(ctx.user))} הכי הרבה נקודות. הטעויות עוד לא נותחו במנוע."
+    md(f'<h1 class="plan-h1">מה לתקן השבוע</h1><p class="plan-sub">{sub_txt}</p>')
     if not ctx.analyzed:
         st.caption("הטעויות עוד לא נותחו במנוע, ולכן מוצגות רק פתיחות חלשות. אפשר להפעיל את הניתוח מההגדרות (⚙).")
         st.button("נתח את הטעויות עכשיו", key="home_analyze", on_click=start_analysis, args=(ctx.user,),
