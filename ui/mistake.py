@@ -6,7 +6,8 @@ import streamlit as st
 from chessapp import config as C
 from chessapp.lines import study_pgn
 
-from .common import (GREEN, LRM, RED, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
+from .names import en_sub
+from .common import (COLORS, GREEN, LRM, RED, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
                      game_links, line_html, md, move_label, pct, rtl_table, set_state, status_map, you)
 from .ctx import ctx
 from .data import (by_cost, explain_p, find_mistake, level_html, level_view, list_mistakes, start_analysis, tr_key)
@@ -45,41 +46,45 @@ def cost_note(p):
 
 
 def line_board(p, x):
-    """The card's board: the mistake with arrows, or the correct line / the punishment played out move by move."""
+    """The board: the mistake with arrows, or the correct line / the punishment played out move by move."""
     k = f'lb_{abs(hash((p["color"], p["key"], p["played"])))}'
-    mode = st.segmented_control("על הלוח", ["mistake", "better", "punish"], default="mistake", key=f"{k}_mode",
-                                format_func={"mistake": "הטעות", "better": "הקו הנכון", "punish": "קו העונש"}.get,
-                                label_visibility="collapsed", width="stretch")
+    mode = st.session_state.get(f"{k}_mode") or "mistake"
     before = chess.Board(p["fen"])
-    if mode not in ("better", "punish"):
-        st.image(board_svg(before, p["color"], None, [(p["played_uci"], RED), (p["best_uci"], GREEN)], size=420), width=420)
-        md(arrow_legend())
-        return
+    sans, first_ply, cur, pk = [], p["ply"], 0, None
     if mode == "better":
         start, sans, first_ply = before, x.get("better_sans") or [], p["ply"]
-    else:
+    elif mode == "punish":
         start = before.copy()
         start.push(chess.Move.from_uci(p["played_uci"]))
         sans, first_ply = x.get("punish_sans") or [], p["ply"] + 1
-    if not sans:
-        st.caption("אין קו להצגה בעמדה הזו.")
-        return
-    pk = f"{k}_{mode}_ply"
-    st.session_state.setdefault(pk, 1)
-    cur = min(st.session_state[pk], len(sans))
-    b, last = start.copy(), None
-    for san in sans[:cur]:
-        last = b.push_san(san)
-    st.image(board_svg(b, p["color"], last, size=420), width=420)
-    c = st.columns(4)
-    c[0].button("התחלה", key=f"{pk}_s", on_click=set_state, args=(pk, 0), disabled=cur == 0, width="stretch")
-    c[1].button("הקודם", key=f"{pk}_p", on_click=set_state, args=(pk, max(0, cur - 1)), disabled=cur == 0, width="stretch")
-    c[2].button("הבא", key=f"{pk}_n", on_click=set_state, args=(pk, min(len(sans), cur + 1)),
-                disabled=cur >= len(sans), width="stretch")
-    c[3].button("סוף", key=f"{pk}_e", on_click=set_state, args=(pk, len(sans)), disabled=cur >= len(sans), width="stretch")
-    intro = ("הקו של המנוע אחרי המסע הנכון:" if mode == "better"
-             else f'מה קורה אחרי {move_label(p["ply"], p["played"])}, לפי המנוע:')
-    md(f'<div class="note" style="margin-top:6px">{intro}</div>' + line_html(sans, first_ply, cur))
+    with st.container(border=True, key=f"card_board_{k}"):
+        if mode == "mistake" or not sans:
+            st.image(board_svg(before, p["color"], None, [(p["played_uci"], RED), (p["best_uci"], GREEN)], size=420), width=420)
+            if mode != "mistake":
+                st.caption("אין קו להצגה בעמדה הזו.")
+        else:
+            pk = f"{k}_{mode}_ply"
+            st.session_state.setdefault(pk, 1)
+            cur = min(st.session_state[pk], len(sans))
+            b, last = start.copy(), None
+            for san in sans[:cur]:
+                last = b.push_san(san)
+            st.image(board_svg(b, p["color"], last, size=420), width=420)
+            c = st.columns(4)
+            c[0].button("»", key=f"{pk}_e", on_click=set_state, args=(pk, len(sans)), disabled=cur >= len(sans), width="stretch")
+            c[1].button("›", key=f"{pk}_n", on_click=set_state, args=(pk, min(len(sans), cur + 1)),
+                        disabled=cur >= len(sans), width="stretch")
+            c[2].button("‹", key=f"{pk}_p", on_click=set_state, args=(pk, max(0, cur - 1)), disabled=cur == 0, width="stretch")
+            c[3].button("«", key=f"{pk}_s", on_click=set_state, args=(pk, 0), disabled=cur == 0, width="stretch")
+        st.segmented_control("על הלוח", ["mistake", "better", "punish"], default="mistake", key=f"{k}_mode",
+                             format_func={"mistake": "הטעות", "better": "הקו הנכון", "punish": "העונש"}.get,
+                             label_visibility="collapsed", width="stretch")
+        if mode == "mistake":
+            md(arrow_legend())
+        elif sans:
+            intro = ("הקו של המנוע אחרי המסע הנכון:" if mode == "better"
+                     else f'מה קורה אחרי {move_label(p["ply"], p["played"])}, לפי המנוע:')
+            md(f'<div class="note" style="margin-top:6px">{intro}</div>' + line_html(sans, first_ply, cur))
 
 
 def select(key):
@@ -110,16 +115,20 @@ def _items():
 
 
 def _top_bar(items, idx):
-    a, b, c = st.columns([3, 1, 1], vertical_alignment="center")
-    a.markdown(f"**{idx + 1} מתוך {len(items)}**")
     keys = [tr_key(p) for p in items]
-    b.button("‹ הקודמת", key="mk_prev", on_click=select, args=(keys[max(idx - 1, 0)],), disabled=idx == 0, width="stretch")
-    c.button("הבאה ›", key="mk_next", on_click=select, args=(keys[min(idx + 1, len(items) - 1)],),
-             disabled=idx >= len(items) - 1, width="stretch")
+    a, b, c = st.columns([2.2, 1.6, 4], vertical_alignment="center")
+    a.markdown(f'<span class="mk-crumb">טעות</span> **{idx + 1} מתוך {len(items)}**', unsafe_allow_html=True)
+    with b:
+        x, y = st.columns(2)
+        x.button("›", key="mk_prev", on_click=select, args=(keys[max(idx - 1, 0)],), disabled=idx == 0, width="stretch",
+                 help="הטעות הקודמת")
+        y.button("‹", key="mk_next", on_click=select, args=(keys[min(idx + 1, len(items) - 1)],),
+                 disabled=idx >= len(items) - 1, width="stretch", help="הטעות הבאה")
+    return c
 
 
-def _all_mistakes(items, idx):
-    with st.expander(f"כל הטעויות ({len(items)})"):
+def _all_mistakes(items, idx, where):
+    with where.expander(f"כל הטעויות ({len(items)})"):
         st.checkbox("להציג גם טעויות שקרו פעם אחת", key="mk_all")
         view = pd.DataFrame({
             "פתיחה": [p["opening"] for p in items],
@@ -162,7 +171,7 @@ def _details(p, x, lv):
             st.caption(f"Opening Explorer לא זמין כרגע: {lv['error']}.")
         else:
             st.caption("כדי לראות מה משחקים שחקנים ברמה דומה צריך טוקן אישי של Lichess (ראו README).")
-    with st.expander("עוד"):
+    with st.expander("עוד: אחוזים, עלות, PGN, Lichess"):
         cost = p["cost"]
         cost_txt = (f'<span style="color:var(--red)">−{cost:.1f}</span>' if cost > 0.05 else
                     f'<span style="color:var(--green)">+{-cost:.1f}</span>' if cost < -0.05 else "0")
@@ -183,7 +192,7 @@ def page_mistakes():
         return
     items = _items()
     if not items:
-        empty("אין טעויות שחוזרות בסף הנוכחי.<br>אפשר להפחית את הרגישות, או לראות גם טעויות שקרו פעם אחת.")
+        empty("אין טעויות שחוזרות ברגישות הנוכחית.<br>אפשר להפחית את הרגישות, או לראות גם טעויות שקרו פעם אחת.")
         a, b = st.columns(2)
         a.button("להפחית את הרגישות ←", key="mk_lower", on_click=lower_sensitivity, type="primary", width="stretch")
         b.checkbox("להציג גם טעויות שקרו פעם אחת", key="mk_all")
@@ -193,8 +202,8 @@ def page_mistakes():
     idx = keys.index(sel) if sel in keys else 0
     st.session_state.mk_sel = keys[idx]
     p = items[idx]
-    _top_bar(items, idx)
-    _all_mistakes(items, idx)
+    where = _top_bar(items, idx)
+    _all_mistakes(items, idx, where)
     if st.session_state.get("mk_drill") and ctx.me:
         st.button("→ חזרה לטעות", key="mk_back", on_click=stop_drill)
         md(f'<div class="card-h">{chip(p["color"])}<span class="t">{en(p["opening"])}</span></div>')
@@ -204,20 +213,22 @@ def page_mistakes():
     x = explain_p(p)
     lv = level_view(p)
     works = bool(lv and lv.get("works"))
-    a, b = st.columns([1.1, 1], gap="large")
-    with a:
-        line_board(p, x)
-    with b:
-        level_badge = f'<span class="badge b-blue">עובד ברמה {you("שלך", "הזו")}</span>' if works else ""
-        md(f'<div class="card-h">{chip(p["color"])}{badge(p["status"])}{level_badge}</div>'
-           f'<div class="card-h"><span class="t">{en(p["opening"])}</span></div>'
-           f'<div class="mk-h1"><bdi dir="ltr">{esc(move_label(p["ply"], p["played"]))}?</bdi> → '
-           f'<bdi dir="ltr">{esc(move_label(p["ply"], p["best_san"] or "?"))}</bdi></div>'
-           f'<div class="cmp"><div class="bad"><div class="k">{you("שיחקת", "שוחק")}</div>'
-           f'<div class="v">{esc(move_label(p["ply"], p["played"]))}</div></div>'
-           f'<div class="good"><div class="k">עדיף</div><div class="v">{esc(move_label(p["ply"], p["best_san"] or "?"))}</div></div></div>'
-           f'<div class="why"><b>למה:</b> {esc(x["why"])}</div>')
+    tone = status_map()[p["status"]][1]
+    played_lbl = esc(move_label(p["ply"], p["played"]))
+    best_lbl = esc(move_label(p["ply"], p["best_san"] or "?"))
+    text, board_col = st.columns([1, 1.05], gap="large")
+    with text:
+        level_badge = f' <span class="pill blue">עובד ברמה {you("שלך", "הזו")}</span>' if works else ""
+        md(f'<div><span class="pill {tone}">{status_map()[p["status"]][0]}</span>{level_badge}'
+           f' <span class="mk-sub">{esc(en_sub(p["opening"], COLORS[p["color"]]))}</span></div>'
+           f'<div class="mk-h1"><bdi dir="ltr">{played_lbl}?</bdi><span class="arrow-sep">←</span><bdi dir="ltr">{best_lbl}</bdi></div>'
+           f'<div class="cmp"><div class="bad"><div class="k">{you("שיחקת", "שוחק")}</div><div class="v">{played_lbl}</div>'
+           f'<div class="s">ב־{p["mistakes"]} מתוך {p["reached"]} משחקים</div></div>'
+           f'<div class="good"><div class="k">עדיף</div><div class="v">{best_lbl}</div>'
+           f'<div class="s">המסע של המנוע</div></div></div>'
+           f'<div class="why"><b>למה זו טעות:</b> {esc(x["why"])}</div>')
         if ctx.me:
-            st.button(f"התאמן על הקו ({C.TRAIN_DEFAULT_MOVES} מסעים ומעלה) ←", key="mk_drill_btn", on_click=start_drill,
-                      type="primary", width="stretch")
-    _details(p, x, lv)
+            st.button("התאמן על הקו ←", key="mk_drill_btn", on_click=start_drill, type="primary", width="stretch")
+        _details(p, x, lv)
+    with board_col:
+        line_board(p, x)

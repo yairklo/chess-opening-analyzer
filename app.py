@@ -1,6 +1,6 @@
 """Streamlit dashboard: opening analysis for a Lichess player (Hebrew, RTL).
 
-Three screens (התוכנית שלי / טעויות / רפרטואר) and a settings popover; each screen lives in `ui/`."""
+Three screens (התוכנית שלי / טעויות / הפתיחות שלי) and a settings popover; each screen lives in `ui/`."""
 import streamlit as st
 
 st.set_page_config(page_title="ניתוח פתיחות", page_icon="♞", layout="wide", initial_sidebar_state="collapsed")
@@ -16,7 +16,7 @@ from ui.quiz import page_quiz  # noqa: E402
 from ui.repertoire import page_repertoire  # noqa: E402
 from ui.settings import settings_controls, settings_stats  # noqa: E402
 
-PAGES = {"home": "התוכנית שלי", "mistakes": "טעויות", "repertoire": "רפרטואר"}
+PAGES = {"home": "התוכנית שלי", "mistakes": "טעויות", "repertoire": "הפתיחות שלי"}
 SCREENS = {"home": page_home, "mistakes": page_mistakes, "repertoire": page_repertoire}
 
 
@@ -35,8 +35,15 @@ if st.session_state.get("user") not in players:
     st.session_state.user = players[0]
 
 # ---------------------------------------------------------------- header + settings
-head, gear = st.columns([8, 1.4], vertical_alignment="center")
-pop = gear.popover("הגדרות", icon=":material/settings:", width="stretch")
+if st.session_state.get("page") not in PAGES:
+    st.session_state.page = "home"
+with st.container(key="topbar"):
+    c_brand, c_nav, c_who, c_gear = st.columns([1.5, 3.6, 2.6, 1.3], vertical_alignment="center")
+c_brand.markdown('<span class="brand-top">♞ ניתוח פתיחות</span>', unsafe_allow_html=True)
+page = c_nav.segmented_control("ניווט", list(PAGES), key="page", format_func=PAGES.get, label_visibility="collapsed",
+                               on_change=leave_quiz)
+pop = c_gear.popover("הגדרות", icon=":material/settings:", width="stretch")
+head = c_who
 sel = settings_controls(pop, players)
 user, colors, speeds, thr, df = sel["user"], sel["colors"], sel["speeds"], sel["thr"], sel["df"]
 
@@ -53,16 +60,12 @@ ctx.set(user=user, me=sel["me"], analyzed=sel["analyzed"], colors=colors, speeds
 chosen = df[df.speed.isin(speeds)]
 main_speed = chosen.speed.mode().iat[0]  # ratings are per speed: use the most played one
 by_time = chosen[chosen.speed == main_speed].sort_values("created")
-head.markdown(f'<div class="topline"><span dir="ltr">{esc(user)}</span><span class="sep">·</span>'
-              f'{int(by_time.rating.iat[-1])} {SPEEDS.get(main_speed, main_speed)}<span class="sep">·</span>'
-              f'{len(fdf):,} משחקים</div>', unsafe_allow_html=True)
+head.markdown(f'<span class="who"><span class="av">{esc(user[:1].upper())}</span><span dir="ltr">{esc(user)}</span>'
+              f'<span class="sep">·</span>{int(by_time.rating.iat[-1])} {SPEEDS.get(main_speed, main_speed)}</span>',
+              unsafe_allow_html=True)
 settings_stats(pop, by_time, main_speed)
 
-# ---------------------------------------------------------------- navigation
-if st.session_state.get("page") not in PAGES:
-    st.session_state.page = "home"
-page = st.segmented_control("ניווט", list(PAGES), key="page", format_func=PAGES.get, label_visibility="collapsed",
-                            on_change=leave_quiz)
+# ---------------------------------------------------------------- screens
 if page is None:  # clicking the active segment deselects it; stay where we were
     page = st.session_state.get("last_page", "home")
 st.session_state.last_page = page

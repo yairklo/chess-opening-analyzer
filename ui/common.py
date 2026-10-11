@@ -35,7 +35,7 @@ CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap');
 :root{--ink:#111827;--muted:#6b7280;--soft:#9ca3af;--line:#e5e7eb;--card:#fff;--bg:#f6f7f9;
---blue:#2563eb;--blue-50:#eff6ff;--green:#15803d;--green-50:#ecfdf3;--red:#dc2626;--red-50:#fef2f2;
+--blue:#2563eb;--blue-50:#eff6ff;--accent:#ff4b4b;--accent-50:#fff1f1;--green:#15803d;--green-50:#ecfdf3;--red:#dc2626;--red-50:#fef2f2;
 --amber:#b45309;--amber-50:#fffbeb;--gray-50:#f3f4f6;}
 html,body,.stApp,[data-testid="stSidebar"],button,input,textarea,select,p,li,label{font-family:'Heebo',system-ui,sans-serif!important;}
 [data-testid="stMain"],[data-testid="stSidebar"]{direction:rtl;text-align:right;}
@@ -84,7 +84,7 @@ background:var(--gray-50);color:#374151;border:1px solid var(--line);}
 
 .card-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;}
 .card-h .t{font-weight:700;font-size:1.08rem;color:var(--ink);}
-.rank{font-weight:800;color:var(--blue);font-size:1.05rem;}
+.rank{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-weight:800;font-size:.9rem;}
 
 .moves{direction:ltr;text-align:left;font-family:'JetBrains Mono',monospace;font-size:.88rem;line-height:2.1;color:#374151;}
 .moves .n{color:var(--soft);margin:0 2px 0 6px;}
@@ -131,11 +131,30 @@ text-decoration:none;font-size:.78rem;font-family:'JetBrains Mono',monospace;}
 .plan-pos{color:var(--muted);font-size:.82rem;margin:2px 0 6px;}
 .plan-text{font-size:.95rem;line-height:1.6;margin:6px 0;}
 .plan-why{font-size:.86rem;color:#78350f;margin:4px 0 8px;}
-.mk-h1{font-family:'JetBrains Mono',monospace;font-size:1.7rem;font-weight:800;margin:.4rem 0;color:var(--ink);direction:ltr;text-align:right;}
+.mk-h1{font-family:'JetBrains Mono',monospace;font-size:1.7rem;font-weight:800;margin:.5rem 0 .8rem;color:var(--ink);direction:rtl;text-align:right;}
 .prog{display:flex;height:10px;border-radius:99px;overflow:hidden;background:var(--gray-50);margin:10px 0;direction:rtl;}
 .prog span{display:block;height:100%;} .prog .r{background:#ef4444;} .prog .i{background:#f59e0b;} .prog .l{background:#22c55e;}
 .orow{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--gray-50);align-items:baseline;}
 .orow:first-of-type{border-top:none;} .orow .nm{font-weight:600;} .orow .sc{font-weight:700;white-space:nowrap;}
+
+.stApp{background:var(--bg);}
+.st-key-topbar{background:#fff;border:1px solid var(--line);border-radius:14px;padding:.35rem 1rem;margin:0 0 1.1rem;}
+.brand-top{font-weight:800;font-size:1.15rem;color:var(--ink);white-space:nowrap;}
+.who{display:inline-flex;align-items:center;gap:8px;background:var(--gray-50);border-radius:99px;padding:5px 12px 5px 6px;font-size:.88rem;color:var(--ink);white-space:nowrap;}
+.who .av{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;font-size:.82rem;}
+.who .sep{color:var(--soft);}
+.st-key-topbar [data-testid="stSegmentedControl"] button[aria-checked="true"],.st-key-topbar button[kind="segmented_controlActive"]{color:var(--accent)!important;}
+.plan-title{font-weight:700;font-size:1.12rem;color:var(--ink);margin:0;line-height:1.3;}
+.plan-en{color:var(--muted);font-size:.8rem;margin:2px 0 8px;direction:rtl;}
+.plan-line{font-size:.9rem;margin:4px 0;color:var(--ink);} .plan-line b{font-weight:700;}
+.plan-reason{font-size:.88rem;color:#374151;margin:10px 0;line-height:1.55;}
+.pill{display:inline-flex;align-items:center;padding:3px 12px;border-radius:99px;font-size:.78rem;font-weight:700;}
+.pill.red{background:var(--accent-50);color:#dc2626;} .pill.amber{background:var(--amber-50);color:var(--amber);}
+.pill.green{background:var(--green-50);color:var(--green);} .pill.blue{background:var(--blue-50);color:var(--blue);} .pill.gray{background:var(--gray-50);color:var(--muted);}
+.mk-crumb{color:var(--muted);font-size:.9rem;}
+.mk-sub{color:var(--muted);font-size:.84rem;margin:.2rem 0;}
+.cmp .s{font-size:.78rem;color:var(--muted);margin-top:2px;}
+.arrow-sep{color:var(--soft);font-weight:400;margin:0 .35em;}
 </style>
 """
 
@@ -244,9 +263,9 @@ def game_links(ids, color, ply, n=10):
         f'<a href="https://lichess.org/{i}/{color}#{ply}" target="_blank">{i}</a>' for i in ids[:n]) + "</div>"
 
 
-BOARD_COLORS = {"square light": "#f0d9b5", "square dark": "#b58863", "square light lastmove": "#cdd26a",
-                "square dark lastmove": "#aaa23a", "margin": "#ffffff", "coord": "#8b8f98",
-                "inner border": "#b58863", "outer border": "#ffffff"}
+BOARD_COLORS = {"square light": "#eeeed2", "square dark": "#769656", "square light lastmove": "#f6f669",
+                "square dark lastmove": "#baca2b", "margin": "#ffffff", "coord": "#6b7280",
+                "inner border": "#769656", "outer border": "#ffffff"}
 
 
 def board_svg(board, color, last=None, arrows=(), size=460):
@@ -257,6 +276,7 @@ def board_svg(board, color, last=None, arrows=(), size=460):
             ar.append(chess.svg.Arrow(m.from_square, m.to_square, color=clr))
     check = board.king(board.turn) if board.is_check() else None
     return chess.svg.board(board, arrows=ar, lastmove=last, check=check, size=size, colors=BOARD_COLORS,
+                           coordinates=size >= 300,
                            orientation=chess.WHITE if color == "white" else chess.BLACK)
 
 

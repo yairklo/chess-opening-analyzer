@@ -1,15 +1,17 @@
-"""רפרטואר: weak and strong openings per colour, and the opening tree with each node's mistakes."""
+"""הפתיחות שלי: weak and strong openings per colour, and the opening tree with each node's mistakes."""
 import altair as alt
+import chess
 import pandas as pd
 import streamlit as st
 
 from chessapp import config as C
 
-from .common import (COLORS, CONF, LRM, WITH_COLOR, chip, clip, empty, en, esc, md, move_label, moves_html, pct,
-                     rtl_table, status_map, tail_moves, wdl, you)
+from .common import (COLORS, CONF, GREEN, LRM, RED, board_svg, clip, empty, esc, md, move_label, moves_html, pct, rtl_table,
+                     status_map, tail_moves, wdl, you)
 from .ctx import ctx
 from .data import tr_key
-from .plan import focus_openings, node_games, non_overlapping, short_name, summary_list
+from .names import he_title
+from .plan import focus_openings, node_games, non_overlapping, short_name
 
 
 
@@ -48,80 +50,119 @@ def open_mistake(key):
     st.session_state.update(page="mistakes", mk_sel=key, mk_drill=False, quiz=False)
 
 
-def select_node(key):
-    st.session_state.op_key = key
+CONF_HE = {"high": ("בטוח", "green"), "mid": ("כנראה", "amber"), "low": ("מוקדם לדעת", "gray")}
+CONF_HELP = ("ההבדל מהממוצע שלך: \"בטוח\" = הרבה משחקים והבדל ברור, \"כנראה\" = סביר, "
+             "\"מוקדם לדעת\" = מעט משחקים או הבדל קטן, ואפשר שהוא מקרי.")
+
+
+def _rows(rows, tone):
+    out = []
+    for r in rows:
+        label, ctone = CONF_HE[r.conf]
+        out.append(
+            f'<div class="orow"><div dir="ltr" style="text-align:right"><div class="nm">{esc(clip(r.opening, 34))}</div>'
+            f'<div class="moves" style="font-size:.78rem;line-height:1.5">{esc(tail_moves(r.group, 30))}</div></div>'
+            f'<div style="display:flex;align-items:center;gap:10px;white-space:nowrap">'
+            f'<span class="pill {ctone}" title="{esc(CONF_HELP)}">{label}</span>'
+            f'<span class="muted small">{r.games} משחקים</span>'
+            f'<span class="sc" style="color:var(--{tone})">{pct(r.score)}</span></div></div>')
+    return "".join(out)
+
+
+def _candidates(t, sign):
+    """Confident openings; when there are none, the leading candidates (marked as possibly chance)."""
+    sure = t[t.conf != "low"]
+    picked = non_overlapping((sure[sure["diff"] * sign > 0].sort_values("diff", ascending=sign < 0)).itertuples(), 3)
+    if picked:
+        return picked, ""
+    cand = t[(t["diff"] * sign > 0) & (t.games >= C.CONF_MID_GAMES)].sort_values("z", ascending=sign < 0)
+    cand = non_overlapping(cand.itertuples(), 3)
+    note = "אין עדיין הבדל מובהק. אלה הבולטות ביותר, ואפשר שהן מקריות." if cand else "כל הפתיחות קרובות לממוצע."
+    return cand, note
 
 
 def _summary(c):
     t = ctx.tbl[ctx.tbl.color == c]
     if t.empty:
         return
-    sure = t[t.conf != "low"]
-    weak = non_overlapping(sure[sure["diff"] < 0].sort_values("diff").itertuples(), 3)
-    strong = non_overlapping(sure[sure["diff"] > 0].sort_values("diff", ascending=False).itertuples(), 3)
-    with st.container(border=True, key=f"card_weak_{c}"):
-        md(f'<div class="card-h">{chip(c)}<span class="t" style="font-size:1.2rem">{WITH_COLOR[c]}</span>'
-           f'<span class="muted small">ממוצע {pct(t.base.iat[0])} ב‑{int((ctx.fdf.color == c).sum()):,} משחקים</span></div>')
-        a, b = st.columns(2, gap="large")
-        with a:
-            md('<div class="wtitle red">▼ איפה אתה מפסיד נקודות</div>' + summary_list(t, weak, -1, "red"))
-        with b:
-            md('<div class="wtitle green">▲ איפה אתה חזק</div>' + summary_list(t, strong, 1, "green"))
-        if st.toggle("הצג גרף", False, key=f"rp_chart_{c}"):
-            st.altair_chart(weak_chart(t), width="stretch")
+    weak, wnote = _candidates(t, -1)
+    strong, snote = _candidates(t, 1)
+    a, b = st.columns(2, gap="large")
+    with a, st.container(border=True, key=f"card_strong_{c}", height="stretch"):
+        md('<div class="plan-title" style="color:var(--green)">▲ חוזקות</div>'
+           + (f'<div class="note">{snote}</div>' if snote else "") + _rows(strong, "green"))
+    with b, st.container(border=True, key=f"card_weak_{c}", height="stretch"):
+        md('<div class="plan-title" style="color:#dc2626">▼ חולשות</div>'
+           + (f'<div class="note">{wnote}</div>' if wnote else "") + _rows(weak, "red"))
+    if st.toggle("הצג גרף", False, key=f"rp_chart_{c}"):
+        st.altair_chart(weak_chart(t), width="stretch")
 
 
-def _tree_table():
+def _tree_table(c):
     tbl = ctx.tbl
-    t = tbl.reset_index(drop=True)
-    both = len(ctx.colors) == 2
-    mark = {"white": "○ ", "black": "● "}
+    t = tbl[tbl.color == c].reset_index(drop=True)
     names = []
     for r in t.itertuples():
-        base = clip(short_name(r), max(14, 28 - 2 * r.depth)) + ("  ⚠" if r.toxic else "")
-        names.append((mark[r.color] if both else "") + base + (" ┘" + " " * r.depth if r.depth else ""))
-    view = pd.DataFrame({"פתיחה": names, "מסעים": [LRM + tail_moves(g) + LRM for g in t.group], "משחקים": t.games,
-                         "ניקוד": t.score * 100, "מול הממוצע": (t.score - t.base) * 100})
-    key = f"op_table_{st.session_state.get('op_nonce', 0)}_{st.session_state.get('op_key', '')}"
+        nm = clip(short_name(r), max(14, 30 - 2 * r.depth)) + ("  ⚠" if r.toxic else "")
+        names.append(f"{tail_moves(r.group, 18)}  {nm}" + (" ┘" + " " * r.depth if r.depth else ""))
+    with_error = [int(node_games(r).first_error_ply.notna().sum()) if ctx.analyzed else 0 for r in t.itertuples()]
+    view = pd.DataFrame({
+        "פתיחה": [LRM + n for n in names], "משחקים": t.games, "ציון": t.score * 100,
+        "מול הממוצע": (t.score - t.base) * 100, "משחקים עם טעות": with_error})
+    key = f"op_table_{c}_{st.session_state.get('op_nonce', 0)}_{st.session_state.get('op_key', '')}"
     ev = rtl_table(view, on_select="rerun", selection_mode="single-row", key=key, height=min(38 + 35 * len(view), 420),
                    column_config={
-                       "פתיחה": st.column_config.TextColumn(width=235, alignment="right",
+                       "פתיחה": st.column_config.TextColumn(width=320, alignment="right",
                                                             help="⚠ = פתיחה בעייתית. כל שורה כוללת גם את ההמשכים שלה."),
-                       "מסעים": st.column_config.TextColumn(width=175, alignment="left"),
-                       "משחקים": st.column_config.NumberColumn(width=60),
-                       "ניקוד": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%", width=105,
-                                                                help="אחוז נקודות: ניצחון = 1, תיקו = ½"),
+                       "משחקים": st.column_config.NumberColumn(width=70),
+                       "ציון": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%", width=110,
+                                                               help="אחוז נקודות: ניצחון = 1, תיקו = ½"),
                        "מול הממוצע": st.column_config.NumberColumn(
-                           format="%+.0f%%", width=80,
-                           help=you("לעומת הממוצע שלך באותו צבע", "לעומת הממוצע של השחקן באותו צבע"))})
+                           format="%+.0f%%", width=90,
+                           help=you("לעומת הממוצע שלך באותו צבע", "לעומת הממוצע של השחקן באותו צבע")),
+                       "משחקים עם טעות": st.column_config.NumberColumn(width=110)})
     if ev.selection.rows:
         st.session_state.op_key = t.key.iat[ev.selection.rows[0]]
     sel = st.session_state.get("op_key")
-    if sel not in set(tbl.key):  # first visit: the line that costs the most points
+    if sel not in set(t.key):  # first visit: the line that costs the most points
         top = focus_openings(1)
+        top = top[top.color == c]
         sel = top.key.iat[0] if len(top) else t.key.iat[0]
-    return tbl[tbl.key == sel].iloc[0]
+    return t[t.key == sel].iloc[0]
 
 
 def _node_mistakes(op):
     diff = (op.score - op.base) * 100
-    toxic = '<span class="badge b-red">⚠ בעייתית</span>' if op.toxic else ""
     with st.container(border=True, key="card_opening"):
-        md(f'<div class="card-h">{chip(op.color)}<span class="t" style="font-size:1.2rem">{en(op.opening)}</span>{toxic}</div>'
+        toxic = ' <span class="pill red">בעייתית</span>' if op.toxic else ""
+        md(f'<div class="plan-title">{esc(he_title(op.opening))}{toxic}</div>'
+           f'<div class="plan-en" dir="ltr" style="text-align:right">{esc(op.opening)}</div>'
            f'{moves_html(op.group.split())}'
-           f'<div class="note"><b>{pct(op.score)}</b> ב‑{op.games} משחקים, '
+           f'<div class="note"><b>{pct(op.score)}</b> ב־{op.games} משחקים, '
            f'<span dir="ltr">{diff:+.0f}%</span> מהממוצע {you("שלך", "של השחקן")} ב{COLORS[op.color]}.</div>'
            f'{wdl(op.win, op.draw, op.loss, legend=False)}')
         if not ctx.analyzed:
-            md('<div class="note" style="margin-top:12px">הטעויות עוד לא נותחו במנוע. אפשר להפעיל את הניתוח מההגדרות (⚙).</div>')
+            md('<div class="note" style="margin-top:12px">הטעויות עוד לא נותחו במנוע. אפשר להפעיל את הניתוח מההגדרות.</div>')
             return
         ids = set(node_games(op).id)
         found = sorted((p for p in ctx.probs if p["color"] == op.color and ids & set(p["games"])
                         and p["status"] != "learned"), key=lambda p: (-p["count"], -p["cost"]))
-        md(f'<div class="sec" style="margin:1rem 0 .4rem"><h3 style="font-size:1.05rem">הטעויות בפתיחה הזו ({len(found)})</h3></div>')
+        md(f'<div class="plan-title" style="margin-top:14px;font-size:1rem">הטעויות בפתיחה הזו ({len(found)})</div>')
         if not found:
-            md('<div class="note">אין כאן טעויות פתוחות בסף הנוכחי.</div>')
-        for i, p in enumerate(found[:8]):
+            md('<div class="note">אין כאן טעויות פתוחות ברגישות הנוכחית.</div>')
+            return
+        top = found[0]
+        a, b = st.columns([1, 2], vertical_alignment="center")
+        a.image(board_svg(chess.Board(top["fen"]), top["color"], None,
+                          [(top["played_uci"], RED), (top["best_uci"], GREEN)], size=200), width=200)
+        with b:
+            md(f'<div class="plan-title" style="font-size:1rem">הטעות שחוזרת כאן</div>'
+               f'<div class="plan-line"><b class="ltr">{esc(move_label(top["ply"], top["played"]))}</b> במקום '
+               f'<b class="ltr">{esc(move_label(top["ply"], top["best_san"] or "?"))}</b> · '
+               f'ב־{top["mistakes"]} מתוך {top["reached"]} משחקים</div>')
+            st.button("לפתוח את הטעות ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),),
+                      type="primary")
+        for i, p in enumerate(found[1:8], 1):
             a, b, c = st.columns([4, 2, 1.4], vertical_alignment="center")
             a.markdown(f'<span dir="ltr">{esc(move_label(p["ply"], p["played"]))}</span> ← '
                        f'<span dir="ltr">{esc(move_label(p["ply"], p["best_san"] or "?"))}</span>', unsafe_allow_html=True)
@@ -135,10 +176,17 @@ def page_repertoire():
     if ctx.tbl.empty:
         empty(f"אין פתיחה ששוחקה לפחות {C.MIN_GROUP_GAMES} פעמים בסינון הנוכחי.")
         return
-    md(f'<h1 class="plan-h1">{you("הרפרטואר שלך", "הרפרטואר של " + esc(ctx.user))}</h1>'
-       '<p class="plan-sub">איפה התוצאות נופלות או עולות ביחס לממוצע, ובכל פתיחה: מה הטעויות.</p>')
-    for c in ctx.colors:
-        _summary(c)
-    md('<div class="sec"><h3>עץ הפתיחות</h3><p>בחרו שורה כדי לראות את הטעויות בה.</p></div>')
-    op = _tree_table()
+    avail = [c for c in ctx.colors if not ctx.tbl[ctx.tbl.color == c].empty] or list(ctx.colors)
+    head, pick_col = st.columns([3, 1.4], vertical_alignment="center")
+    c = pick_col.segmented_control("צבע", avail, default=avail[0], key="rp_color", label_visibility="collapsed",
+                                   format_func={"white": "○ לבן", "black": "● שחור"}.get, width="stretch")
+    c = c if c in avail else avail[0]
+    t = ctx.tbl[ctx.tbl.color == c]
+    games = int((ctx.fdf.color == c).sum())
+    head.markdown(f'<h1 class="plan-h1" style="margin-top:0">{you("הפתיחות שלך", "הפתיחות של " + esc(ctx.user))}</h1>'
+                  f'<p class="plan-sub">איך אתה מצליח בכל פתיחה לעומת הממוצע שלך ב{COLORS[c]} '
+                  f'({pct(t.base.iat[0])} ב־{games:,} משחקים).</p>', unsafe_allow_html=True)
+    _summary(c)
+    md('<div class="sec"><h3>כל הפתיחות</h3><p>בחרו שורה כדי לראות את הטעויות בה.</p></div>')
+    op = _tree_table(c)
     _node_mistakes(op)

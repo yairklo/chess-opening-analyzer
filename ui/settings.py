@@ -14,6 +14,7 @@ from .ctx import ctx
 from .data import data_stamp, get_data, job_state, start_analysis
 
 SENSITIVITY = {20: "רק טעויות גסות", 12: "רגיל", 8: "גם אי־דיוקים"}
+SENSITIVITY_HELP = {20: "מסעים שמורידים הרבה מהסיכויים", 12: "מומלץ", 8: "יותר טעויות, חלקן קטנות"}
 
 
 @st.fragment(run_every=3)
@@ -90,16 +91,19 @@ def settings_controls(pop, players):
         stamp = data_stamp(user)
         analyzed = bool(stamp and stamp[2])
         engine_panel(user, analyzed, stamp)
-        st.caption("חיבור ל־Lichess: " + ("הטוקן מוגדר." if C.lichess_token() else
-                   "אין טוקן, ולכן אין נתוני \"מה משחקים ברמה שלך\" (ראו README)."))
+        if C.lichess_token():
+            st.markdown('<span class="pill green">מחובר ל־Lichess</span>', unsafe_allow_html=True)
+        else:
+            st.markdown('<span class="pill gray">לא מחובר</span> טוקן Lichess מוסיף את "מה משחקים ברמה שלך". '
+                        'איך מחברים? ראו README.', unsafe_allow_html=True)
         st.divider()
         pick = st.segmented_control("אני משחק עם" if me else "צבע", ["all", "white", "black"], default="all",
                                     key="f_color", format_func={"all": "שני הצבעים", **COLORS}.get, width="stretch")
         colors = [pick] if pick in COLORS else list(COLORS)
         if st.session_state.get("thr") not in SENSITIVITY:  # a value left over from the old slider
             st.session_state.thr = C.ERROR_WIN_DROP
-        thr = st.radio("רגישות: כמה גדולה טעות צריכה להיות", list(SENSITIVITY), key="thr", horizontal=True,
-                       format_func=SENSITIVITY.get,
+        thr = st.radio("רגישות: כמה גדולה טעות צריכה להיות", list(SENSITIVITY), key="thr",
+                       format_func=SENSITIVITY.get, captions=[SENSITIVITY_HELP[v] for v in SENSITIVITY],
                        help="\"רק טעויות גסות\" מציג מסעים שמורידים את סיכויי הניצחון בלפחות 20 נקודות אחוז, "
                             "\"רגיל\" 12, \"גם אי־דיוקים\" 8. השינוי מיידי, בלי להריץ שוב את המנוע.")
         df, all_errors = get_data(user, stamp, thr)
@@ -111,7 +115,7 @@ def settings_controls(pop, players):
             st.caption(f"כל המשחקים בקצב {SPEEDS.get(avail[0], avail[0])}." if avail else "")
         st.divider()
         status = STATUS_ME if me else STATUS_OTHER
-        with st.expander("איך לקרוא את הנתונים", icon=":material/help:"):
+        with st.expander("מילון מונחים", icon=":material/help:"):
             md(f"""<dl class="gloss">
 <dt>אחוז נקודות</dt><dd>ניצחון = נקודה, תיקו = חצי. 50% = מאזן שוויוני.</dd>
 <dt>טעות בפתיחה</dt><dd>מסע ב‑{C.ANALYZE_PLIES // 2} המסעים הראשונים שלך שמוריד את סיכויי הניצחון ב‑{thr}% או יותר (לפי הרגישות שנבחרה). מסע שהוא המסע של המנוע אף פעם לא נחשב טעות.

@@ -72,8 +72,8 @@ def test_home_empty_state_offers_lower_sensitivity():
 
 def test_fix_now_opens_the_matching_mistake():
     at = run("plan3")
-    first_card = next(m.value for m in at.markdown if 'class="plan-text"' in m.value)
-    played = re.search(r'<span class="ltr">\d+\.(?:\.\.)?([^<]+)</span>', first_card).group(1)
+    first_card = next(m.value for m in at.markdown if 'class="plan-line"' in m.value)
+    played = re.search(r'<b class="ltr">\d+\.(?:\.\.)?([^<]+)</b>', first_card).group(1)
     fix = next(b for b in at.button if b.label == FIX)
     at = fix.click().run()
     assert not at.exception, at.exception
@@ -87,7 +87,7 @@ def test_mistake_screen_walks_through_the_list():
     at = run("plan3", "mistakes")
     assert any(re.search(r"\*\*1 מתוך \d+\*\*", m.value) for m in at.markdown)
     first = at.session_state["mk_sel"]
-    at = next(b for b in at.button if b.label == "הבאה ›").click().run()
+    at = at.button(key="mk_next").click().run()
     assert at.session_state["mk_sel"] != first
     assert any(re.search(r"\*\*2 מתוך \d+\*\*", m.value) for m in at.markdown)
 
