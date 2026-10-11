@@ -4,6 +4,7 @@ The explorer API currently requires an OAuth token: put a personal token (no sco
 Without a token, or when the request fails, `explore` returns (None, reason) and the dashboard says why.
 """
 import json
+import time
 
 import requests
 
@@ -12,6 +13,9 @@ from .analyze import db
 
 RATING_BUCKETS = [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500]
 REASONS = {401: "הטוקן לא תקף (401)", 403: "אין הרשאה (403)", 429: "יותר מדי בקשות ל‑Lichess, נסו שוב בעוד דקה (429)"}
+
+
+REQUEST_GAP = 0.3  # seconds after every real Explorer request
 
 
 def similar_ratings(rating: int):
@@ -42,6 +46,7 @@ def _fetch(url: str, params: dict, cache_params: str, fen: str):
         return None, "תשובה לא צפויה מ‑Lichess"
     con.execute("INSERT OR REPLACE INTO explorer VALUES(?,?,?)", (fen, cache_params, json.dumps(data)))
     con.commit()
+    time.sleep(REQUEST_GAP)  # only uncached lookups reach here: keep a steady pace under Lichess's rate limit
     return data, None
 
 

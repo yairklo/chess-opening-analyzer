@@ -16,8 +16,10 @@ from chessapp.analyze import build_results, users
 from chessapp.fetch_games import FetchError, fetch
 from chessapp.stats import (SORTS, load_results, move_label, occurrences, opening_table, overall, prepare,
                             problem_positions, san_of)
-from chessapp.explorer import explore, similar_ratings
+from chessapp.explorer import REASONS, explore, similar_ratings
 from chessapp.lines import explain, study_pgn
+
+REASONS_429 = REASONS[429]
 
 st.set_page_config(page_title="ניתוח פתיחות", page_icon="♞", layout="wide")
 
@@ -291,9 +293,15 @@ def add_player(name, n, run_engine=True):
     st.rerun()
 
 
-@st.cache_data(show_spinner=False, ttl=600)  # failures are retried after 10 minutes
 def explorer(fen, rating):
-    return explore(fen, rating)
+    """Explorer lookup; successes are cached in SQLite. After a 429 no request is sent for a minute, so a long
+    list of cards does not keep hitting the rate limit (and failures are not cached for longer than that)."""
+    if time.time() < st.session_state.get("explorer_blocked_until", 0):
+        return None, REASONS_429
+    ex, reason = explore(fen, rating)
+    if reason == REASONS_429:
+        st.session_state.explorer_blocked_until = time.time() + 60
+    return ex, reason
 
 
 # ---------------------------------------------------------------- html helpers
@@ -1083,7 +1091,11 @@ def page_mistakes():
     items = sorted((p for p in items if not (hide and p["status"] == "learned")), key=SORTS[sort])
     if C.lichess_token() and items:
         # checked only for repeated mistakes, to keep the number of Explorer requests small
-        practical = [p for p in items if p["count"] >= 2 and (level_view(p) or {}).get("works")]
+        with st.spinner("בודק מה משחקים ברמה שלך (הפעם הראשונה איטית יותר, התוצאות נשמרות)..."):
+            practical = [p for p in items if p["count"] >= 2 and (level_view(p) or {}).get("works")]
+        if time.time() < st.session_state.get("explorer_blocked_until", 0):
+            st.caption("Lichess הגביל זמנית את הבקשות (429), ולכן חלק מהמסעים לא נבדקו מול הרמה שלך. "
+                       "נסו שוב בעוד דקה; מה שכבר נבדק נשמר.")
         if practical and st.toggle(f"הסתר מסעים שעובדים ברמה {you('שלי', 'של השחקן')} ({len(practical)})", False,
                                    key="mk_hide_level",
                                    help="מסעים ש־Stockfish מחשיב טעות, אבל ב־Lichess, ברמת דירוג דומה, הם נפוצים "
