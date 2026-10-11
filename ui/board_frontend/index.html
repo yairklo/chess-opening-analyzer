@@ -1,0 +1,225 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; font-family: Heebo, system-ui, sans-serif; }
+  #root { display: block; margin: 0 auto; }
+  .boardwrap { position: relative; width: 100%; aspect-ratio: 1 / 1; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .board { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
+           border-radius: 6px; overflow: hidden; box-shadow: 0 1px 2px rgba(16,24,40,.08); }
+  .sq { position: relative; }
+  .sq.light { background: #f0d9b5; } .sq.dark { background: #b58863; }
+  .sq.last::before { content: ""; position: absolute; inset: 0; background: rgba(205, 210, 106, .65); }
+  .sq.hov::before { content: ""; position: absolute; inset: 0; background: rgba(37, 99, 235, .38); }
+  .sq.sel::before { content: ""; position: absolute; inset: 0; background: rgba(20, 120, 220, .45); }
+  .sq .dot { position: absolute; left: 35%; top: 35%; width: 30%; height: 30%; border-radius: 50%; background: rgba(20, 20, 20, .28); pointer-events: none; }
+  .sq .ring { position: absolute; inset: 4%; border-radius: 50%; border: 4px solid rgba(20, 20, 20, .28); pointer-events: none; box-sizing: border-box; }
+  .sq .piece { position: absolute; inset: 0; background-size: 100% 100%; background-repeat: no-repeat; }
+  .interactive .sq .piece.mine { cursor: grab; }
+  .coord { position: absolute; font-size: 10px; font-weight: 600; opacity: .75; pointer-events: none; }
+  .coord.f { right: 3px; bottom: 1px; } .coord.r { left: 3px; top: 1px; }
+  .light .coord { color: #b58863; } .dark .coord { color: #f0d9b5; }
+  svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .ghost { position: fixed; pointer-events: none; background-size: 100% 100%; z-index: 10; transform: translate(-50%, -50%); }
+  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .opt { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 1.05rem; font-weight: 600; padding: 10px 6px;
+         border-radius: 10px; border: 1px solid #d1d5db; background: #fff; color: #111827; cursor: pointer; transition: all .12s; }
+  .opt small { display: block; font-family: Heebo, system-ui, sans-serif; font-weight: 400; font-size: .72rem; color: #6b7280; margin-top: 2px; }
+  .opt:hover { border-color: #2563eb; background: #eff6ff; box-shadow: 0 0 0 2px rgba(37, 99, 235, .18); }
+  .hint { font-size: .78rem; color: #6b7280; margin-top: 8px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  const FILES = "abcdefgh";
+  let P = null;            // props of the last render
+  let sel = null;          // selected square (click-to-move)
+  let hover = null;        // option under the mouse: {from, to}
+  let drag = null;         // {from, ghost, pid}
+
+  function post(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+  function setHeight() { post("streamlit:setFrameHeight", { height: Math.ceil(document.getElementById("root").getBoundingClientRect().height) + 8 }); }
+  function emit(uci, via) {
+    post("streamlit:setComponentValue", {
+      dataType: "json",
+      value: { uci: uci, via: via, token: Date.now() + "-" + Math.random().toString(36).slice(2) }
+    });
+  }
+
+  function parseFen(fen) {
+    const rows = fen.split(" ")[0].split("/");
+    const map = {};
+    rows.forEach((row, i) => {
+      let f = 0;
+      for (const ch of row) {
+        if (/\d/.test(ch)) f += parseInt(ch, 10);
+        else { map[FILES[f] + (8 - i)] = ch; f++; }
+      }
+    });
+    return map;
+  }
+  const isWhite = (ch) => ch === ch.toUpperCase();
+
+  function sqName(col, row) { // col, row = visual position (0..7, top-left origin)
+    return P.orientation === "white" ? FILES[col] + (8 - row) : FILES[7 - col] + (row + 1);
+  }
+  function sqCenter(name) {
+    const f = FILES.indexOf(name[0]), r = parseInt(name[1], 10) - 1;
+    return P.orientation === "white" ? [f + 0.5, 7 - r + 0.5] : [7 - f + 0.5, r + 0.5];
+  }
+  function pieceUrl(ch) { return 'url("data:image/svg+xml;utf8,' + encodeURIComponent(P.pieces[ch]).replace(/'/g, "%27") + '")'; }
+
+  function arrowSvg(list) {
+    let s = '<svg class="arrows" viewBox="0 0 8 8">';
+    for (const a of list) {
+      const [x1, y1] = sqCenter(a.from), [x2, y2] = sqCenter(a.to);
+      const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+      const head = 0.42, wHead = 0.3, w = 0.17;
+      const bx = x2 - ux * head, by = y2 - uy * head;
+      const sx = x1 + ux * 0.22, sy = y1 + uy * 0.22;
+      s += '<g opacity="' + (a.opacity || 0.82) + '" fill="' + a.color + '" stroke="' + a.color + '">'
+        + '<line x1="' + sx + '" y1="' + sy + '" x2="' + bx + '" y2="' + by + '" stroke-width="' + w + '" stroke-linecap="round"/>'
+        + '<polygon stroke="none" points="' + x2 + "," + y2 + " " + (bx - uy * wHead) + "," + (by + ux * wHead) + " "
+        + (bx + uy * wHead) + "," + (by - ux * wHead) + '"/></g>';
+    }
+    return s + "</svg>";
+  }
+
+  function allArrows() {
+    const list = (P.arrows || []).slice();
+    if (hover) list.push({ from: hover.from, to: hover.to, color: "#2563eb", opacity: 0.9 });
+    return list;
+  }
+
+  function render() {
+    const pieces = parseFen(P.fen);
+    const legal = P.interactive ? (P.legal || {}) : {};
+    const root = document.getElementById("root");
+    root.style.width = Math.min(P.size, window.innerWidth) + "px";
+    let h = '<div class="boardwrap' + (P.interactive ? " interactive" : "") + '"><div class="board" id="board">';
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const name = sqName(col, row);
+        const light = (col + row) % 2 === 0;
+        let cls = "sq " + (light ? "light" : "dark");
+        if (P.last && (P.last[0] === name || P.last[1] === name)) cls += " last";
+        if (hover && (hover.from === name || hover.to === name)) cls += " hov";
+        if (sel === name) cls += " sel";
+        h += '<div class="' + cls + '" data-sq="' + name + '">';
+        if (col === 0) h += '<span class="coord r">' + name[1] + "</span>";
+        if (row === 7) h += '<span class="coord f">' + name[0] + "</span>";
+        if (sel && legal[sel] && legal[sel].indexOf(name) >= 0) h += pieces[name] ? '<span class="ring"></span>' : '<span class="dot"></span>';
+        const ch = pieces[name];
+        if (ch) {
+          const mine = !!legal[name];
+          h += '<div class="piece' + (mine ? " mine" : "") + '" data-sq="' + name + '" data-p="' + ch + '"></div>';
+        }
+        h += "</div>";
+      }
+    }
+    h += "</div>" + arrowSvg(allArrows()) + "</div>";
+    if (P.options && P.options.length) {
+      h += '<div class="opts">';
+      P.options.forEach((o, i) => {
+        h += '<button class="opt" data-i="' + i + '">' + esc(o.label) + (o.sub ? "<small>" + esc(o.sub) + "</small>" : "") + "</button>";
+      });
+      h += "</div>";
+      if (P.interactive) h += '<div class="hint">אפשר גם לגרור כלי על הלוח, או ללחוץ על כלי ואז על משבצת</div>';
+    }
+    root.innerHTML = h;
+    root.querySelectorAll(".piece").forEach((el) => { el.style.backgroundImage = pieceUrl(el.getAttribute("data-p")); });
+    bind();
+    setHeight();
+  }
+  function esc(t) { return String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+  function squareAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const sq = el && el.closest ? el.closest(".sq") : null;
+    return sq ? sq.getAttribute("data-sq") : null;
+  }
+
+  function tryMove(from, to) {
+    const legal = P.legal || {};
+    if (!legal[from] || legal[from].indexOf(to) < 0) return false;
+    const pieces = parseFen(P.fen);
+    let uci = from + to;
+    const ch = pieces[from];
+    if (ch && ch.toLowerCase() === "p" && (to[1] === "8" || to[1] === "1")) uci += "q";
+    sel = null; hover = null;
+    emit(uci, "board");
+    return true;
+  }
+
+  function bind() {
+    document.querySelectorAll(".opt").forEach((b) => {
+      const o = P.options[parseInt(b.getAttribute("data-i"), 10)];
+      b.addEventListener("mouseenter", () => { hover = { from: o.uci.slice(0, 2), to: o.uci.slice(2, 4) }; refreshOverlay(); });
+      b.addEventListener("mouseleave", () => { hover = null; refreshOverlay(); });
+      b.addEventListener("focus", () => { hover = { from: o.uci.slice(0, 2), to: o.uci.slice(2, 4) }; refreshOverlay(); });
+      b.addEventListener("blur", () => { hover = null; refreshOverlay(); });
+      b.addEventListener("click", () => { hover = null; emit(o.uci, "option"); });
+    });
+    if (!P.interactive) return;
+    const board = document.getElementById("board");
+    board.addEventListener("pointerdown", (e) => {
+      const name = squareAt(e.clientX, e.clientY);
+      if (!name) return;
+      const legal = P.legal || {};
+      if (sel && legal[sel] && legal[sel].indexOf(name) >= 0) { tryMove(sel, name); return; }
+      if (legal[name]) {
+        sel = name; render();
+        const pieceEl = document.querySelector('.piece[data-sq="' + name + '"]');
+        if (pieceEl) {
+          const rect = pieceEl.getBoundingClientRect();
+          const ghost = document.createElement("div");
+          ghost.className = "ghost";
+          ghost.style.width = rect.width + "px"; ghost.style.height = rect.height + "px";
+          ghost.style.backgroundImage = pieceEl.style.backgroundImage;
+          ghost.style.left = e.clientX + "px"; ghost.style.top = e.clientY + "px";
+          document.body.appendChild(ghost);
+          pieceEl.style.opacity = 0.3;
+          drag = { from: name, ghost: ghost, moved: false };
+        }
+      } else if (sel) { sel = null; render(); }
+    });
+    window.onpointermove = (e) => {
+      if (!drag) return;
+      drag.moved = true;
+      drag.ghost.style.left = e.clientX + "px"; drag.ghost.style.top = e.clientY + "px";
+    };
+    window.onpointerup = (e) => {
+      if (!drag) return;
+      const d = drag; drag = null;
+      d.ghost.remove();
+      const to = squareAt(e.clientX, e.clientY);
+      if (d.moved && to && to !== d.from) {
+        if (!tryMove(d.from, to)) { sel = null; render(); }
+      } else { render(); }   // a plain click keeps the piece selected
+    };
+  }
+
+  function refreshOverlay() {   // hover changes only the arrows and two squares: no full re-render
+    document.querySelectorAll(".sq.hov").forEach((s) => s.classList.remove("hov"));
+    if (hover) {
+      document.querySelectorAll('.sq[data-sq="' + hover.from + '"],.sq[data-sq="' + hover.to + '"]').forEach((s) => s.classList.add("hov"));
+    }
+    const old = document.querySelector("svg.arrows");
+    if (old) old.outerHTML = arrowSvg(allArrows());
+  }
+
+  window.addEventListener("message", (e) => {
+    if (!e.data || e.data.type !== "streamlit:render") return;
+    const next = e.data.args;
+    if (!P || P.fen !== next.fen || P.orientation !== next.orientation) { sel = null; hover = null; }
+    P = next;
+    render();
+  });
+  post("streamlit:componentReady", { apiVersion: 1 });
+</script>
+</body>
+</html>

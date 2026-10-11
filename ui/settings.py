@@ -70,6 +70,12 @@ def settings_controls(pop, players):
     with pop:
         user = st.selectbox("שחקן", players, key="user",
                             format_func=lambda u: f"{u} (אני)" if u == C.USER.lower() else u)
+        with st.expander(ltr_label("הורדת המשחקים האחרונים של ", user, " מ־Lichess"), icon=":material/download:"):
+            st.caption(ltr_label("מורידים מחדש את המשחקים האחרונים מ־", "Lichess") +
+                       ". משחקים חדשים נכנסים לעץ ולסטטיסטיקות, ועמדות שכבר נותחו לא מנותחות שוב.")
+            n_refresh = st.segmented_control("כמה משחקים אחרונים", [200, 500, 1000], default=500, key="refresh_n")
+            if st.button("הורד ועדכן", key="refresh_games", icon=":material/refresh:", width="stretch"):
+                add_player(user, n_refresh or 500, True)
         with st.expander(ltr_label("הוספת שחקן מ־", "Lichess"), icon=":material/person_add:"):
             with st.form("add_player", border=False, clear_on_submit=True):
                 name = st.text_input(ltr_label("שם משתמש ב־", "Lichess"), placeholder="DrNykterstein", key="add_name")

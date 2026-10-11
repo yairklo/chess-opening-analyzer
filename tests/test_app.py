@@ -109,3 +109,23 @@ def test_repertoire_opens_a_mistake():
     at = open_btns[0].click().run()
     assert at.session_state["page"] == "mistakes"
     assert not at.exception, at.exception
+
+
+def test_quiz_loads_with_the_interactive_board():
+    at = run("yairklo", "home", quiz=True)
+    assert not at.exception, at.exception
+    assert any("תרגול מהיר" in m.value for m in at.markdown)
+
+
+def test_board_helpers():
+    import chess
+    from ui.board import fresh_move, legal_map
+    b = chess.Board()
+    legal = legal_map(b)
+    assert sorted(legal["e2"]) == ["e3", "e4"] and "e1" not in legal
+    assert legal_map(b, {"e2e4"}) == {"e2": ["e4"]}
+    import streamlit as st
+    st.session_state.clear()
+    assert fresh_move({"uci": "e2e4", "token": "t1"}, "tok", b) == "e2e4"
+    assert fresh_move({"uci": "e2e4", "token": "t1"}, "tok", b) is None      # the same token twice
+    assert fresh_move({"uci": "e2e5", "token": "t2"}, "tok", b) is None      # not a legal move

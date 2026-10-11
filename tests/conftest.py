@@ -94,6 +94,7 @@ def _create_db():
     rep = lambda fam: (fam, wins + losses)
     learned = ("g4", losses[:3] + [("clean", 1.0)] * 8)   # fixed: 3+ later visits without repeating it
     _build(con, "plan3", [rep("g1"), rep("g2"), rep("g3"), learned])
+    _build(con, "yairklo", [rep("g1"), rep("g2"), rep("g3"), learned])   # the default player (practice is "mine" only)
     # one recurring mistake; another opening with mediocre results; the rest wins, so the averages are high
     _build(con, "plan1", [rep("g1"), ("g5", [("clean", 1.0)] * 10),
                           ("g6", [("clean", 0.0)] * 5 + [("clean", 1.0)] * 5)])

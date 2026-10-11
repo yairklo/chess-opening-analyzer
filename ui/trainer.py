@@ -4,7 +4,8 @@ import streamlit as st
 
 from chessapp import config as C
 
-from .common import COLORS, GREEN, RED, board_svg, chip, en, esc, line_html, md, move_label
+from .board import chess_board, fresh_move
+from .common import COLORS, GREEN, RED, chip, en, esc, line_html, md, move_label
 from .ctx import ctx
 from .data import level_view, tr_key
 
@@ -104,46 +105,16 @@ def drill(p):
         a, b = st.columns([1.15, 1], gap="large")
         ans = st.session_state.tr_answer
         with a:
-            arrows = []
+            arrows, options, interactive, allow = [], [], False, None
             if turn == "me" and ans:
                 arrows = [(ans["uci"], GREEN if ans["ok"] else RED)] + ([] if ans["is_best"] else [(ans["best"], GREEN)])
-            st.image(board_svg(board, color, last, arrows), width=460)
-            md(f'<div class="note">{chip(color)} {en(p["opening"])}</div>' + (line_html(sans, p["ply"], len(sans)) if sans else ""))
-        with b:
-            done = st.session_state.tr_done
-            if turn == "me":
-                md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">מסע {done + 1}: תור ה{COLORS[color]}. מה הכי טוב?</span></div>')
-                if not ans:
-                    mistake = p["played_uci"] if not st.session_state.tr_moves else None
-                    opts = my_options(board, info, mistake)
-                    g = st.columns(2)
-                    for j, u in enumerate(opts):
-                        g[j % 2].button(board.san(chess.Move.from_uci(u)), key=f"tro_{len(sans)}_{j}_{u}",
-                                        on_click=tr_answer, args=(board, info, u, color), width="stretch")
-                else:
-                    chosen = board.san(chess.Move.from_uci(ans["uci"]))
-                    best = board.san(chess.Move.from_uci(ans["best"]))
-                    if ans["is_best"]:
-                        st.success(f"נכון! {chosen} הוא המסע הטוב ביותר.", icon=":material/check_circle:")
-                    elif ans["ok"]:
-                        st.success(f"גם טוב: {chosen} רק {ans['drop']:.0f}% פחות מ־{best}. ממשיכים עם המסע שלך.",
-                                   icon=":material/check_circle:")
-                    else:
-                        st.error(f"{chosen} מוריד את סיכויי הניצחון ב־{ans['drop']:.0f}%. הטוב ביותר: {best}. "
-                                 f"ממשיכים עם {best}.", icon=":material/cancel:")
-                    st.button("המשך", type="primary", on_click=tr_continue, args=(board,), width="stretch",
-                              icon=":material/arrow_back:")
+            elif turn == "me":
+                mistake = p["played_uci"] if not st.session_state.tr_moves else None
+                options = [dict(uci=u, label=board.san(chess.Move.from_uci(u))) for u in my_options(board, info, mistake)]
+                interactive = True
             elif turn == "opp":
-                from_games = tuple((r["san"], r["n"]) for r in p["replies"]) if mine_first and len(sans) == 1 else ()
-                opts = tr_opp(board.fen(), rating, from_games)
-                if not opts:
-                    st.session_state.update(tr_turn="done", tr_stop="over")
-                    st.rerun()
                 md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">תור היריב: איך הוא עונה?</span></div>'
-                   '<div class="note">בחרו תגובה. אחר כך אפשר לחזור ולנסות תגובה אחרת.</div>')
-                for j, o in enumerate(opts):
-                    st.button(f'{o["san"]}   ·   {" · ".join(o["tags"])}', key=f"tropp_{len(sans)}_{o['uci']}",
-                              on_click=tr_opp_pick, args=(o["uci"],), width="stretch")
+                   '<div class="note">בחרו תגובה (או גררו אותה על הלוח). אחר כך אפשר לחזור ולנסות תגובה אחרת.</div>')
             else:
                 log = st.session_state.tr_log
                 own = [l for l in log if l.get("reason") != "mine"]

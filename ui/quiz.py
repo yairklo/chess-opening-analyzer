@@ -7,7 +7,8 @@ import streamlit as st
 from chessapp import config as C
 from chessapp.stats import SORTS
 
-from .common import COLORS, GREEN, RED, arrow_legend, board_svg, chip, empty, en, esc, game_links, md, moves_html, set_state
+from .board import chess_board, fresh_move
+from .common import COLORS, GREEN, RED, arrow_legend, chip, empty, en, esc, game_links, md, moves_html, set_state
 from .ctx import ctx
 from .data import level_view, recurring
 
@@ -66,8 +67,14 @@ def page_quiz():
     with st.container(border=True, key="card_quiz"):
         a, b = st.columns([1.15, 1], gap="large")
         with a:
-            st.image(board_svg(board, p["color"], None, [(p["played_uci"], RED), (p["best_uci"], GREEN)] if ans else []),
-                     width=460)
+            options = [] if ans else [dict(uci=board.parse_san(m).uci(), label=m) for m in opts]
+            val = chess_board(board, p["color"], key=f"quizb_{sig}_{i}_{int(bool(ans))}",
+                              arrows=[(p["played_uci"], RED), (p["best_uci"], GREEN)] if ans else [],
+                              options=options, interactive=not ans)
+            mv = None if ans else fresh_move(val, "quiz_token", board)
+            if mv:
+                answer(board.san(chess.Move.from_uci(mv)), p["best_san"])
+                st.rerun()
             if ans:
                 md(arrow_legend())
         with b:
@@ -83,9 +90,7 @@ def page_quiz():
                     cells.append(f'<div class="{cls}"><div class="v">{mark}{esc(m)}</div></div>')
                 md(f'<div class="cmp opts">{"".join(cells)}</div>')
             else:
-                g = st.columns(2)
-                for j, m in enumerate(opts):
-                    g[j % 2].button(m, key=f"opt_{sig}_{i}_{j}", on_click=answer, args=(m, p["best_san"]), width="stretch")
+                md('<div class="note">גררו כלי על הלוח, או בחרו אפשרות מתחת ללוח (מעבר עם העכבר מסמן אותה על הלוח).</div>')
             if ans:
                 if ans == p["best_san"]:
                     st.success(f"נכון! {p['best_san']} הוא המסע ש־Stockfish ממליץ עליו.", icon=":material/check_circle:")
