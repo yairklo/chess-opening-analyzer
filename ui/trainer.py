@@ -113,7 +113,48 @@ def drill(p):
                 options = [dict(uci=u, label=board.san(chess.Move.from_uci(u))) for u in my_options(board, info, mistake)]
                 interactive = True
             elif turn == "opp":
-                md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">תור היריב: איך הוא עונה?</span></div>'
+                from_games = tuple((r["san"], r["n"]) for r in p["replies"]) if mine_first and len(sans) == 1 else ()
+                opp = tr_opp(board.fen(), rating, from_games)
+                if not opp:
+                    st.session_state.update(tr_turn="done", tr_stop="over")
+                    st.rerun()
+                options = [dict(uci=o["uci"], label=o["san"], sub=" · ".join(o["tags"])) for o in opp]
+                interactive, allow = True, {o["uci"] for o in opp}
+            sig = abs(hash(st.session_state.get("tr_sig")))
+            val = chess_board(board, color, key=f"trb_{sig}_{len(sans)}_{turn}_{int(bool(ans))}", arrows=arrows,
+                              last=last, options=options, interactive=interactive, allow=allow)
+            mv = fresh_move(val, "tr_token", board) if interactive else None
+            if mv and turn == "me":
+                tr_answer(board, info, mv, color)
+                st.rerun()
+            elif mv and turn == "opp":
+                tr_opp_pick(mv)
+                st.rerun()
+            md(f'<div class="note">{chip(color)} {en(p["opening"])}</div>'
+               + (line_html(sans, p["ply"], len(sans)) if sans else ""))
+        with b:
+            done = st.session_state.tr_done
+            if turn == "me":
+                md(f'<div class="card-h"><span class="t" style="font-size:1.15rem">מסע {done + 1}: תור ה{COLORS[color]}. '
+                   f'מה הכי טוב?</span></div>')
+                if not ans:
+                    md('<div class="note">גררו כלי על הלוח, או בחרו אחת מהאפשרויות מתחת ללוח '
+                       '(מעבר עם העכבר מסמן אותה על הלוח).</div>')
+                else:
+                    chosen = board.san(chess.Move.from_uci(ans["uci"]))
+                    best = board.san(chess.Move.from_uci(ans["best"]))
+                    if ans["is_best"]:
+                        st.success(f"נכון! {chosen} הוא המסע הטוב ביותר.", icon=":material/check_circle:")
+                    elif ans["ok"]:
+                        st.success(f"גם טוב: {chosen} רק {ans['drop']:.0f}% פחות מ־{best}. ממשיכים עם המסע שלך.",
+                                   icon=":material/check_circle:")
+                    else:
+                        st.error(f"{chosen} מוריד את סיכויי הניצחון ב־{ans['drop']:.0f}%. הטוב ביותר: {best}. "
+                                 f"ממשיכים עם {best}.", icon=":material/cancel:")
+                    st.button("המשך", type="primary", on_click=tr_continue, args=(board,), width="stretch",
+                              icon=":material/arrow_back:")
+            elif turn == "opp":
+                md('<div class="card-h"><span class="t" style="font-size:1.15rem">תור היריב: איך הוא עונה?</span></div>'
                    '<div class="note">בחרו תגובה (או גררו אותה על הלוח). אחר כך אפשר לחזור ולנסות תגובה אחרת.</div>')
             else:
                 log = st.session_state.tr_log

@@ -129,3 +129,15 @@ def test_board_helpers():
     assert fresh_move({"uci": "e2e4", "token": "t1"}, "tok", b) == "e2e4"
     assert fresh_move({"uci": "e2e4", "token": "t1"}, "tok", b) is None      # the same token twice
     assert fresh_move({"uci": "e2e5", "token": "t2"}, "tok", b) is None      # not a legal move
+
+
+def test_drill_shows_the_trainer_card(monkeypatch):
+    """Regression: the trainer card (board column and text column) must render on the mistake screen."""
+    import ui.trainer
+    monkeypatch.setattr(ui.trainer, "tr_node", lambda fen, color, rating: dict(
+        mpv=[("d2d3", 30), ("c2c3", 20)], wins=[55.0, 50.0], gap=5.0, critical=False, level=None, masters=None,
+        level_n=0, masters_n=0, level_err=None, known=False))
+    at = run("yairklo", "mistakes", mk_drill=True)
+    assert not at.exception, at.exception
+    assert any("מסע 1: תור" in m.value for m in at.markdown)
+    assert "→ חזרה לטעות" in labels(at)
