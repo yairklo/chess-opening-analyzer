@@ -159,7 +159,12 @@ text-decoration:none;font-size:.78rem;font-family:'JetBrains Mono',monospace;}
 .st-key-tree_rows{gap:.2rem!important;}
 .st-key-tree_rows [data-testid="stVerticalBlock"],.st-key-tree_rows [data-testid="stHorizontalBlock"]{gap:.3rem!important;}
 [class*="st-key-op_"] button{min-height:2rem!important;padding:.1rem .6rem!important;font-size:.88rem;justify-content:flex-start!important;}
-[class*="st-key-op_"] button p,[class*="st-key-op_"] button div{text-align:right!important;width:100%;}
+[class*="st-key-op_"] button > div{width:100%!important;justify-content:flex-start!important;}
+[class*="st-key-op_"] button span,[class*="st-key-op_"] button [data-testid="stMarkdownContainer"]{width:100%!important;display:block;text-align:right!important;}
+[class*="st-key-op_"] button p{text-align:right!important;margin:0;}
+[class*="st-key-opd1_"] button > div{padding-right:1.4rem!important;box-sizing:border-box;} [class*="st-key-opd2_"] button > div{padding-right:2.6rem!important;box-sizing:border-box;}
+[class*="st-key-opd3_"] button > div{padding-right:3.8rem!important;box-sizing:border-box;}
+[class*="st-key-opd1_"] button::before,[class*="st-key-opd2_"] button::before,[class*="st-key-opd3_"] button::before{content:"└";color:#9ca3af;margin-left:.35rem;}
 </style>
 """
 

@@ -123,23 +123,21 @@ def _tree_table(c):
     t = full if show_all or len(full) <= TREE_ROWS else full.head(TREE_ROWS)
     if sel not in set(t.key):
         t = pd.concat([t, full[full.key == sel]]).reset_index(drop=True)
-    w = [4.6, 1.0, 1.1, 1.1]
+    w = [5.4, 1.1, 1.1]
     rows = st.container(key="tree_rows")
     head = rows.columns(w)
-    for col, label in zip(head, ["פתיחה", "משחקים", "ציון", "מול הממוצע"]):
+    for col, label in zip(head, ["פתיחה", "משחקים", "ציון"]):
         col.markdown(f'<span class="muted small">{label}</span>', unsafe_allow_html=True)
     for r in t.itertuples():
-        a, b, s_, d = rows.columns(w, vertical_alignment="center")
+        a, b, s_ = rows.columns(w, vertical_alignment="center")
         name = clip(short_name(r), 30)
         label = ltr_text(name) + ("  ⚠" if r.toxic else "")
-        a.button("  " * min(r.depth, 3) + label, key=f"op_{c}_{r.key}", on_click=select_node, args=(r.key,),
-                 type="primary" if r.key == sel else "secondary", width="stretch",
-                 help=f"{tail_moves(r.group, 40)}  {r.opening}")
-        diff = (r.score - r.base) * 100
+        with a.container(key=f"opd{min(r.depth, 3)}_{c}_{r.key}"):
+            st.button(label, key=f"op_{c}_{r.key}", on_click=select_node, args=(r.key,),
+                      type="primary" if r.key == sel else "secondary", width="stretch",
+                      help=f"{tail_moves(r.group, 40)}  {r.opening}")
         b.markdown(f'<span class="small">{r.games}</span>', unsafe_allow_html=True)
         s_.markdown(f'<span class="small">{pct(r.score)}</span>', unsafe_allow_html=True)
-        d.markdown(f'<span class="small" dir="ltr" style="color:var(--{"green" if diff >= 0 else "red"})">{diff:+.0f}%</span>',
-                   unsafe_allow_html=True)
     if len(full) > TREE_ROWS:
         st.toggle(f"הצג את כל הפתיחות ({len(full)})", key="rp_all")
     return full[full.key == sel].iloc[0]
