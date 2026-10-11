@@ -6,7 +6,7 @@ import streamlit as st
 
 from chessapp import config as C
 
-from .common import (COLORS, CONF, GREEN, LRM, RED, board_svg, clip, empty, esc, md, move_label, moves_html, pct, rtl_table,
+from .common import (COLORS, CONF, GREEN, LRM, RED, ltr_text, board_svg, clip, empty, esc, md, move_label, moves_html, pct, rtl_table,
                      status_map, tail_moves, wdl, you)
 from .ctx import ctx
 from .data import tr_key
@@ -123,15 +123,16 @@ def _tree_table(c):
     t = full if show_all or len(full) <= TREE_ROWS else full.head(TREE_ROWS)
     if sel not in set(t.key):
         t = pd.concat([t, full[full.key == sel]]).reset_index(drop=True)
-    w = [4.2, 0.9, 1.1, 1.0, 0.9]
+    w = [4.6, 1.0, 1.1, 1.1]
     rows = st.container(key="tree_rows")
     head = rows.columns(w)
-    for col, label in zip(head, ["פתיחה", "משחקים", "ציון", "מול הממוצע", "עם טעות"]):
+    for col, label in zip(head, ["פתיחה", "משחקים", "ציון", "מול הממוצע"]):
         col.markdown(f'<span class="muted small">{label}</span>', unsafe_allow_html=True)
     for r in t.itertuples():
-        a, b, s_, d, e = rows.columns(w, vertical_alignment="center")
-        name = clip(short_name(r), 30) + ("  ⚠" if r.toxic else "")
-        a.button(("↳ " * min(r.depth, 2)) + name, key=f"op_{c}_{r.key}", on_click=select_node, args=(r.key,),
+        a, b, s_, d = rows.columns(w, vertical_alignment="center")
+        name = clip(short_name(r), 30)
+        label = ltr_text(name) + ("  ⚠" if r.toxic else "")
+        a.button("  " * min(r.depth, 3) + label, key=f"op_{c}_{r.key}", on_click=select_node, args=(r.key,),
                  type="primary" if r.key == sel else "secondary", width="stretch",
                  help=f"{tail_moves(r.group, 40)}  {r.opening}")
         diff = (r.score - r.base) * 100
@@ -139,8 +140,6 @@ def _tree_table(c):
         s_.markdown(f'<span class="small">{pct(r.score)}</span>', unsafe_allow_html=True)
         d.markdown(f'<span class="small" dir="ltr" style="color:var(--{"green" if diff >= 0 else "red"})">{diff:+.0f}%</span>',
                    unsafe_allow_html=True)
-        with_err = int(node_games(r).first_error_ply.notna().sum()) if ctx.analyzed else "—"
-        e.markdown(f'<span class="small">{with_err}</span>', unsafe_allow_html=True)
     if len(full) > TREE_ROWS:
         st.toggle(f"הצג את כל הפתיחות ({len(full)})", key="rp_all")
     return full[full.key == sel].iloc[0]
@@ -182,11 +181,11 @@ def _node_mistakes(op):
             st.button("לפתוח את הטעות ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),),
                       type="primary")
         for i, p in enumerate(found[1:3], 1):
-            a, b, c = st.columns([4, 2, 1.4], vertical_alignment="center")
+            a, b, c = st.columns([3, 2.2, 1.6], vertical_alignment="center")
             a.markdown(f'<span dir="ltr">{esc(move_label(p["ply"], p["played"]))}</span> ← '
                        f'<span dir="ltr">{esc(move_label(p["ply"], p["best_san"] or "?"))}</span>', unsafe_allow_html=True)
             b.caption(f'{status_map()[p["status"]][0]} · ' + (f'{p["count"]} פעמים' if p["count"] > 1 else "פעם אחת"))
-            c.button("לטעות ←", key=f"rp_mk_{op.key}_{i}", on_click=open_mistake, args=(tr_key(p),), width="stretch")
+            c.button("פתח ←", key=f"rp_mk_{op.key}_{i}", on_click=open_mistake, args=(tr_key(p),), width="stretch")
         more = len(found) - 3
         if more > 0 or singles:
             st.caption((f"ועוד {more} שחוזרות" if more > 0 else "") + (" · " if more > 0 and singles else "")

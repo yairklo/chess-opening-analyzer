@@ -104,7 +104,7 @@ def test_settings_survive_navigation():
 
 def test_repertoire_opens_a_mistake():
     at = run("plan3", "repertoire")
-    open_btns = [b for b in at.button if b.label == "לטעות ←"]
+    open_btns = [b for b in at.button if b.label == "פתח ←"]
     assert open_btns
     at = open_btns[0].click().run()
     assert at.session_state["page"] == "mistakes"
@@ -189,7 +189,7 @@ def test_other_player_copy_is_third_person():
 def test_repertoire_lists_only_repeated_mistakes():
     at = run("plan3", "repertoire")
     assert not at.exception, at.exception
-    assert len([b for b in at.button if b.label == "לטעות ←"]) <= 2
+    assert len([b for b in at.button if b.label == "פתח ←"]) <= 2
     assert not any("פעם אחת" in c.value and "·" in c.value for c in at.caption)
 
 

@@ -158,7 +158,8 @@ text-decoration:none;font-size:.78rem;font-family:'JetBrains Mono',monospace;}
 .arrow-sep{color:var(--soft);font-weight:400;margin:0 .35em;}
 .st-key-tree_rows{gap:.2rem!important;}
 .st-key-tree_rows [data-testid="stVerticalBlock"],.st-key-tree_rows [data-testid="stHorizontalBlock"]{gap:.3rem!important;}
-[class*="st-key-op_"] button{min-height:2rem!important;padding:.1rem .6rem!important;font-size:.88rem;}
+[class*="st-key-op_"] button{min-height:2rem!important;padding:.1rem .6rem!important;font-size:.88rem;justify-content:flex-start!important;}
+[class*="st-key-op_"] button p,[class*="st-key-op_"] button div{text-align:right!important;width:100%;}
 </style>
 """
 
@@ -197,6 +198,12 @@ def bidi(text):
 def en(t):
     """Left-to-right text (opening names, moves) isolated inside a right-to-left sentence."""
     return f'<bdi dir="ltr">{esc(t)}</bdi>'
+
+
+def ltr_text(*parts):
+    """Plain-text label (button, tab) with each part kept left-to-right inside an RTL label: bdi does not work in
+    widget labels, so Unicode isolates (RLI ... LRI part PDI ... PDI) are used instead."""
+    return "⁧" + " ".join(f"⁦{p}⁩" for p in parts if p) + "⁩"
 
 
 def clip(text, n):
