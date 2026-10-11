@@ -191,3 +191,23 @@ def test_repertoire_lists_only_repeated_mistakes():
     assert not at.exception, at.exception
     assert len([b for b in at.button if b.label == "לטעות ←"]) <= 2
     assert not any("פעם אחת" in c.value and "·" in c.value for c in at.caption)
+
+
+def test_bidi_wraps_moves_and_numbers():
+    from ui.common import bidi
+    out = bidi("אחרי 6...Kxf7 יורדים מ־63% ל־56%")
+    assert '<bdi dir="ltr">6...Kxf7</bdi>' in out and '<bdi dir="ltr">63</bdi>' in out
+
+
+def test_why_short_names_the_punishing_move_in_percent_sentences():
+    from chessapp.lines import explain
+    fen = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
+    x = explain(dict(fen=fen, played_uci="g8f6", best_uci="f8c5", color="black", ply=6, win_before=60.0, win_after=40.0))
+    if "סיכויי הניצחון" in x["why_short"]:
+        assert x["why_short"].startswith("אחרי ")
+
+
+def test_no_prefix_letter_glued_to_a_latin_name():
+    at = run("plan0")      # not analysed: the subtitle names the player
+    text_ = " ".join(m.value for m in at.markdown)
+    assert "לplan0" not in text_

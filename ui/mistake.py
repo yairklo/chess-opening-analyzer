@@ -7,7 +7,7 @@ from chessapp import config as C
 from chessapp.lines import study_pgn
 
 from .names import en_sub
-from .common import (COLORS, GREEN, LRM, RED, RESULTS, moves_html, position_at, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
+from .common import (bidi, COLORS, GREEN, LRM, RED, RESULTS, moves_html, position_at, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
                      game_links, line_html, md, move_label, pct, rtl_table, set_state, status_map, you)
 from .ctx import ctx
 from .data import explain_p, find_mistake, level_html, level_view, start_analysis, tr_key
@@ -59,7 +59,9 @@ def line_board(p, x):
         start.push(chess.Move.from_uci(p["played_uci"]))
         sans, first_ply = x.get("punish_sans") or [], p["ply"] + 1
     with st.container(border=True, key=f"card_board_{k}"):
-        if mode == "mistake" or not sans:
+        if mode == "game":
+            _game_board(p)
+        elif mode == "mistake" or not sans:
             st.image(board_svg(before, p["color"], None, [(p["played_uci"], RED), (p["best_uci"], GREEN)], size=420), width=420)
             if mode != "mistake":
                 st.caption("אין קו להצגה בעמדה הזו.")
@@ -70,7 +72,7 @@ def line_board(p, x):
             b, last = start.copy(), None
             for san in sans[:cur]:
                 last = b.push_san(san)
-            st.image(board_svg(b, p["color"], last, size=380), width=380)
+            st.image(board_svg(b, p["color"], last, size=340), width=340)
             c = st.columns(4)
             c[0].button("»", key=f"{pk}_s", on_click=set_state, args=(pk, 0), disabled=cur == 0, width="stretch",
                         help="להתחלה")
@@ -80,12 +82,13 @@ def line_board(p, x):
                         disabled=cur >= len(sans), width="stretch", help="קדימה")
             c[3].button("«", key=f"{pk}_e", on_click=set_state, args=(pk, len(sans)), disabled=cur >= len(sans),
                         width="stretch", help="לסוף")
-        st.segmented_control("על הלוח", ["mistake", "better", "punish"], default="mistake", key=f"{k}_mode",
-                             format_func={"mistake": "הטעות", "better": "הקו הנכון", "punish": "העונש"}.get,
+        st.segmented_control("על הלוח", ["mistake", "better", "punish", "game"], default="mistake", key=f"{k}_mode",
+                             format_func={"mistake": "הטעות", "better": "הקו הנכון", "punish": "העונש",
+                                          "game": you("המשחק שלי", "המשחק")}.get,
                              label_visibility="collapsed", width="stretch")
         if mode == "mistake":
             md(arrow_legend())
-        elif sans:
+        elif mode != "game" and sans:
             intro = ("הקו של המנוע אחרי המסע הנכון:" if mode == "better"
                      else f'מה קורה אחרי <bdi dir="ltr">{esc(move_label(p["ply"], p["played"]))}</bdi>, לפי המנוע:')
             md(f'<div class="note" style="margin-top:6px">{intro}</div>'
@@ -162,21 +165,25 @@ def _all_mistakes(items, idx, where):
             st.rerun()
 
 
-def _game_viewer(p):
-    """Pick one of the games and step through it up to the mistake."""
+def _game_board(p):
+    """Inside the board card: pick one of my games and step through it up to the mistake."""
+    k = tr_key(p)
     games = ctx.fdf[ctx.fdf.id.isin(p["games"])].sort_values("created", ascending=False)
     if games.empty:
+        st.caption("אין משחקים להצגה.")
         return
     label = {r.id: f"{fmt_date(r.created)} · {RESULTS[r.result]}" for r in games.itertuples()}
-    gid = st.selectbox("משחק", list(label), format_func=label.get, key=f"gv_game_{tr_key(p)}")
+    gid = st.selectbox("משחק", list(label), format_func=label.get, key=f"gv_game_{k}", label_visibility="collapsed")
     moves = games[games.id == gid].moves.iat[0].split()
     last = min(p["ply"] - 1, len(moves))
-    ply = st.slider("מסע", 0, last, last, key=f"gv_ply_{tr_key(p)}_{gid}",
-                    help="גוררים כדי לעבור על המשחק עד הרגע שבו טעית")
+    ply = min(st.session_state.get(f"gv_ply_{k}_{gid}", last), last)
     board, lastmove = position_at(moves, ply)
-    at_mistake = ply == p["ply"] - 1
-    st.image(board_svg(board, p["color"], lastmove, [(p["played_uci"], RED)] if at_mistake else [], size=340), width=340)
-    md(moves_html(moves[:last], cur=ply or None))
+    st.image(board_svg(board, p["color"], lastmove, [(p["played_uci"], RED)] if ply == p["ply"] - 1 else [], size=310),
+             width=310)
+    st.slider("מסע", 0, last, last, key=f"gv_ply_{k}_{gid}", label_visibility="collapsed",
+              help="גוררים כדי לעבור על המשחק עד הרגע שבו טעית")
+    md(f'<div class="note"><a href="https://lichess.org/{gid}/{p["color"]}#{p["ply"]}" target="_blank">'
+       f'פתיחת המשחק ב־Lichess ↗</a></div>')
 
 
 def _details(p, x, lv):
@@ -188,8 +195,7 @@ def _details(p, x, lv):
            f'<div class="note">{cost_note(p)}</div>'
            f'{replies_html(p, x["punish_first"])}'
            f'<div class="note" style="margin-top:10px">{usual_html(p)}</div>'
-           f'<div class="note" style="margin-top:10px">המשחקים:</div>{game_links(p["games"], p["color"], p["ply"])}')
-        _game_viewer(p)
+           f'<div class="note" style="margin-top:10px">המשחקים עצמם מופיעים על הלוח, בלשונית "{you("המשחק שלי", "המשחק")}".</div>')
     with st.expander("מה משחקים ברמה שלך"):
         if lv and lv.get("ex"):
             md(level_html(p, lv) + explorer_html(lv["ex"], p["color"]))
@@ -251,7 +257,7 @@ def page_mistakes():
            f'<div class="s">ב־{p["mistakes"]} מתוך {p["reached"]} משחקים</div></div>'
            f'<div class="good"><div class="k">עדיף</div><div class="v">{best_lbl}</div>'
            f'<div class="s">המסע של המנוע</div></div></div>'
-           f'<div class="why"><b>למה זו טעות:</b> {esc(x["why"])}</div>')
+           f'<div class="why"><b>למה זו טעות:</b> {bidi(x["why"])}</div>')
         if ctx.me:
             st.button("התאמן על הקו ←", key="mk_drill_btn", on_click=start_drill, type="primary", width="stretch")
         _details(p, x, lv)

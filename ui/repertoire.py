@@ -91,12 +91,23 @@ def _summary(c):
     a, b = st.columns(2, gap="large")
     with a, st.container(border=True, key=f"card_strong_{c}", height="stretch"):
         md('<div class="plan-title" style="color:var(--green)">▲ חוזקות</div>'
-           + (f'<div class="note">{snote}</div>' if snote else "") + _rows(strong, "green"))
+           + (f'<div class="note">{snote}</div>' if snote else "") + _rows(strong[:2], "green"))
     with b, st.container(border=True, key=f"card_weak_{c}", height="stretch"):
         md('<div class="plan-title" style="color:#dc2626">▼ חולשות</div>'
-           + (f'<div class="note">{wnote}</div>' if wnote else "") + _rows(weak, "red"))
+           + (f'<div class="note">{wnote}</div>' if wnote else "") + _rows(weak[:2], "red"))
     if st.toggle("הצג גרף", False, key=f"rp_chart_{c}"):
         st.altair_chart(weak_chart(t), width="stretch")
+
+
+def _default_node(full, c):
+    """The costliest opening with a repeated open mistake; else simply the costliest."""
+    rep = [p for p in ctx.probs if p["color"] == c and p["count"] >= 2 and p["status"] != "learned"]
+    order = full[full.cost > 0].sort_values("cost", ascending=False) if ctx.analyzed else full.iloc[0:0]
+    for r in order.itertuples():
+        ids = set(node_games(r).id)
+        if any(ids & set(p["games"]) for p in rep):
+            return r.key
+    return order.key.iat[0] if len(order) else full.key.iat[0]
 
 
 def _tree_table(c):
@@ -104,10 +115,8 @@ def _tree_table(c):
     full = tbl[tbl.color == c].reset_index(drop=True)
     show_all = bool(st.session_state.get("rp_all"))
     sel = st.session_state.get("op_key")
-    if sel not in set(full.key):  # first visit: the line that costs the most points
-        top = focus_openings(1)
-        top = top[top.color == c]
-        sel = top.key.iat[0] if len(top) else full.key.iat[0]
+    if sel not in set(full.key):
+        sel = _default_node(full, c)
     t = full if show_all or len(full) <= TREE_ROWS else full.head(TREE_ROWS)
     if sel not in set(t.key):
         t = pd.concat([t, full[full.key == sel]]).reset_index(drop=True)
@@ -122,15 +131,15 @@ def _tree_table(c):
     key = f"op_table_{c}_{st.session_state.get('op_nonce', 0)}_{int(show_all)}"
     ev = rtl_table(view, on_select="rerun", selection_mode="single-row", key=key, height=min(38 + 35 * len(view), 420),
                    column_config={
-                       "פתיחה": st.column_config.TextColumn(width=320, alignment="right",
+                       "פתיחה": st.column_config.TextColumn(width=240, alignment="right",
                                                             help="⚠ = פתיחה בעייתית. כל שורה כוללת גם את ההמשכים שלה."),
-                       "משחקים": st.column_config.NumberColumn(width=70),
-                       "ציון": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%", width=110,
+                       "משחקים": st.column_config.NumberColumn(width=62),
+                       "ציון": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%", width=90,
                                                                help="אחוז נקודות: ניצחון = 1, תיקו = ½"),
                        "מול הממוצע": st.column_config.NumberColumn(
-                           format="%+.0f%%", width=90,
+                           format="%+.0f%%", width=80,
                            help=you("לעומת הממוצע שלך באותו צבע", "לעומת הממוצע של השחקן באותו צבע")),
-                       "משחקים עם טעות": st.column_config.NumberColumn(width=110)})
+                       "משחקים עם טעות": st.column_config.NumberColumn(width=80)})
     if ev.selection.rows:
         sel = t.key.iat[ev.selection.rows[0]]
         st.session_state.op_key = sel
@@ -201,6 +210,9 @@ def page_repertoire():
                   f'<p class="plan-sub">{you("איך אתה מצליח", "איך מצליח השחקן")} בכל פתיחה לעומת {you("הממוצע שלך", "הממוצע שלו")} ב{COLORS[c]} '
                   f'({pct(t.base.iat[0])} ב־{games:,} משחקים).</p>', unsafe_allow_html=True)
     _summary(c)
-    md('<div class="sec"><h3>כל הפתיחות</h3><p>בחרו שורה כדי לראות את הטעויות בה.</p></div>')
-    op = _tree_table(c)
-    _node_mistakes(op)
+    md('<div class="sec" style="margin-top:1rem"><h3>כל הפתיחות</h3><p>בחרו שורה בתיבת הסימון משמאל כדי לראות את הטעויות בה.</p></div>')
+    tcol, dcol = st.columns([1.5, 1], gap="large")
+    with tcol:
+        op = _tree_table(c)
+    with dcol:
+        _node_mistakes(op)

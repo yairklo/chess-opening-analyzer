@@ -159,7 +159,8 @@ def explain(p):
     mine_before = cp_before if me == chess.WHITE else -cp_before
     drop = (mine_before - mine_cp) / 100
     best_label = move_label(p["ply"], before.san(chess.Move.from_uci(p["best_uci"]))) if p["best_uci"] else ""
-    drop_short = f"סיכויי הניצחון יורדים מ־{p['win_before']:.0f}% ל־{p['win_after']:.0f}%"
+    after_punish = f"אחרי {move_label(p['ply'] + 1, punish[0])} " if punish else ""
+    drop_short = f"{after_punish}סיכויי הניצחון יורדים מ־{p['win_before']:.0f}% ל־{p['win_after']:.0f}%"
     if end.is_checkmate() or mine_cp <= -9000:
         why = "אחרי המסע הזה ליריב יש מט כפוי."
         short = why
@@ -167,6 +168,10 @@ def explain(p):
         # material goes, but the engine still likes the position: compensation (about equal) or a smaller edge
         gave, _ = trade(before, end, me)
         gave_txt = pieces_text(gave) or "חומר"
+        if lost - max(drop, 0) >= 0.75:
+            # the counted line stops mid-exchange: the engine's own evaluation says the swing is smaller
+            n = max(1, round(drop))
+            gave_txt = "חומר בשווי פיון" if n == 1 else f"חומר בשווי כ־{n} פיונים"
         short = f"נותן {gave_txt}" + (f", ו־{best_label} שומר על יתרון גדול יותר" if best_label else "")
         if mine_cp <= 50:
             why = (f"המסע נותן {gave_txt}, אבל לפי המנוע יש פיצוי והעמדה נשארת כמעט שקולה "

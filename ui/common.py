@@ -1,5 +1,6 @@
 """Shared constants, CSS and HTML/board helpers for every screen."""
 import html
+import re
 
 import chess
 import chess.svg
@@ -179,6 +180,15 @@ def esc(t):
 def ltr_label(before, name, after=""):
     """Widget label (plain text, no HTML) with an English name that keeps its place inside Hebrew text."""
     return f"⁧{before}⁦{name}⁩{after}⁩"
+
+
+_LATIN_RUN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+#=.\-]*[A-Za-z0-9+#=]|[A-Za-z0-9]")
+
+
+def bidi(text):
+    """HTML-escaped text where every Latin/number run (moves such as 6...Kxf7, names, 63%) is a left-to-right
+    island, so notation keeps its order inside a Hebrew sentence."""
+    return _LATIN_RUN.sub(lambda m: f'<bdi dir="ltr">{m.group(0)}</bdi>', esc(text))
 
 
 def en(t):

@@ -4,7 +4,7 @@ import streamlit as st
 
 from chessapp import config as C
 
-from .common import COLORS, GREEN, RED, board_svg, clip, empty, esc, md, move_label, pct, tail_moves, you
+from .common import COLORS, GREEN, RED, bidi, board_svg, clip, empty, esc, md, move_label, pct, tail_moves, you
 from .ctx import ctx
 from .data import explain_p, recurring, start_analysis, tr_key
 from .names import en_sub, he_title
@@ -53,7 +53,7 @@ def mistake_card(i, p):
         md(f'<div class="plan-line">{you("שיחקת", "שוחק")} <b class="ltr">{esc(move_label(p["ply"], p["played"]))}</b> '
            f'ב־{p["mistakes"]} מתוך {p["reached"]} משחקים</div>'
            f'<div class="plan-line">עדיף <b class="ltr">{esc(move_label(p["ply"], p["best_san"] or "?"))}</b></div>'
-           f'<div class="plan-reason">{esc(x.get("why_short") or short_reason(x["why"], 16))}</div>')
+           f'<div class="plan-reason">{bidi(x.get("why_short") or short_reason(x["why"], 16))}</div>')
         st.button("לתקן עכשיו ←", key=f"fix_{i}", on_click=open_mistake, args=(tr_key(p),), type="primary",
                   width="stretch")
 
@@ -109,7 +109,8 @@ def page_home():
         sub_txt = (f"שלוש הטעויות שחוזרות {you('אצלך', 'אצל ' + esc(ctx.user))} ועולות "
                    f"{you('לך', 'לו')} הכי הרבה נקודות. כל אחת לוקחת בערך 5 דקות.")
     else:
-        sub_txt = f"הפתיחות שעולות {you('לך', 'ל' + esc(ctx.user))} הכי הרבה נקודות. הטעויות עוד לא נותחו במנוע."
+        sub_txt = (f"הפתיחות שעולות {you('לך', 'עבור ' + esc(ctx.user))} הכי הרבה נקודות. "
+                   "הטעויות עוד לא נותחו במנוע.")
     md(f'<h1 class="plan-h1">מה לתקן השבוע</h1><p class="plan-sub">{sub_txt}</p>')
     if not ctx.analyzed:
         st.caption("הטעויות עוד לא נותחו במנוע, ולכן מוצגות רק פתיחות חלשות. אפשר להפעיל את הניתוח מההגדרות (⚙).")
