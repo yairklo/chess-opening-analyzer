@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+DATA = Path(os.environ.get("CHESS_DATA_DIR") or ROOT / "data")   # the override is for tests
 DATA.mkdir(exist_ok=True)
 
 USER = "yairklo"
