@@ -91,12 +91,10 @@ def _summary(c):
     a, b = st.columns(2, gap="large")
     with a, st.container(border=True, key=f"card_strong_{c}", height="stretch"):
         md('<div class="plan-title" style="color:var(--green)">▲ חוזקות</div>'
-           + (f'<div class="note">{snote}</div>' if snote else "") + _rows(strong[:2], "green"))
+           + (f'<div class="note">{snote}</div>' if snote else "") + _rows(strong[:1], "green"))
     with b, st.container(border=True, key=f"card_weak_{c}", height="stretch"):
         md('<div class="plan-title" style="color:#dc2626">▼ חולשות</div>'
-           + (f'<div class="note">{wnote}</div>' if wnote else "") + _rows(weak[:2], "red"))
-    if st.toggle("הצג גרף", False, key=f"rp_chart_{c}"):
-        st.altair_chart(weak_chart(t), width="stretch")
+           + (f'<div class="note">{wnote}</div>' if wnote else "") + _rows(weak[:1], "red"))
 
 
 def _default_node(full, c):
@@ -110,7 +108,12 @@ def _default_node(full, c):
     return order.key.iat[0] if len(order) else full.key.iat[0]
 
 
+def select_node(key):
+    st.session_state.op_key = key
+
+
 def _tree_table(c):
+    """The opening tree as rows: the name is a button spanning the row, the numbers sit beside it."""
     tbl = ctx.tbl
     full = tbl[tbl.color == c].reset_index(drop=True)
     show_all = bool(st.session_state.get("rp_all"))
@@ -120,29 +123,24 @@ def _tree_table(c):
     t = full if show_all or len(full) <= TREE_ROWS else full.head(TREE_ROWS)
     if sel not in set(t.key):
         t = pd.concat([t, full[full.key == sel]]).reset_index(drop=True)
-    names = []
+    w = [4.2, 0.9, 1.1, 1.0, 0.9]
+    rows = st.container(key="tree_rows")
+    head = rows.columns(w)
+    for col, label in zip(head, ["פתיחה", "משחקים", "ציון", "מול הממוצע", "עם טעות"]):
+        col.markdown(f'<span class="muted small">{label}</span>', unsafe_allow_html=True)
     for r in t.itertuples():
-        nm = clip(short_name(r), max(14, 30 - 2 * r.depth)) + ("  ⚠" if r.toxic else "")
-        names.append(f"{tail_moves(r.group, 18)}  {nm}" + (" ┘" + " " * r.depth if r.depth else ""))
-    with_error = [int(node_games(r).first_error_ply.notna().sum()) if ctx.analyzed else 0 for r in t.itertuples()]
-    view = pd.DataFrame({
-        "פתיחה": [LRM + n for n in names], "משחקים": t.games, "ציון": t.score * 100,
-        "מול הממוצע": (t.score - t.base) * 100, "משחקים עם טעות": with_error})
-    key = f"op_table_{c}_{st.session_state.get('op_nonce', 0)}_{int(show_all)}"
-    ev = rtl_table(view, on_select="rerun", selection_mode="single-row", key=key, height=min(38 + 35 * len(view), 420),
-                   column_config={
-                       "פתיחה": st.column_config.TextColumn(width=240, alignment="right",
-                                                            help="⚠ = פתיחה בעייתית. כל שורה כוללת גם את ההמשכים שלה."),
-                       "משחקים": st.column_config.NumberColumn(width=62),
-                       "ציון": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%", width=90,
-                                                               help="אחוז נקודות: ניצחון = 1, תיקו = ½"),
-                       "מול הממוצע": st.column_config.NumberColumn(
-                           format="%+.0f%%", width=80,
-                           help=you("לעומת הממוצע שלך באותו צבע", "לעומת הממוצע של השחקן באותו צבע")),
-                       "משחקים עם טעות": st.column_config.NumberColumn(width=80)})
-    if ev.selection.rows:
-        sel = t.key.iat[ev.selection.rows[0]]
-        st.session_state.op_key = sel
+        a, b, s_, d, e = rows.columns(w, vertical_alignment="center")
+        name = clip(short_name(r), 30) + ("  ⚠" if r.toxic else "")
+        a.button(("↳ " * min(r.depth, 2)) + name, key=f"op_{c}_{r.key}", on_click=select_node, args=(r.key,),
+                 type="primary" if r.key == sel else "secondary", width="stretch",
+                 help=f"{tail_moves(r.group, 40)}  {r.opening}")
+        diff = (r.score - r.base) * 100
+        b.markdown(f'<span class="small">{r.games}</span>', unsafe_allow_html=True)
+        s_.markdown(f'<span class="small">{pct(r.score)}</span>', unsafe_allow_html=True)
+        d.markdown(f'<span class="small" dir="ltr" style="color:var(--{"green" if diff >= 0 else "red"})">{diff:+.0f}%</span>',
+                   unsafe_allow_html=True)
+        with_err = int(node_games(r).first_error_ply.notna().sum()) if ctx.analyzed else "—"
+        e.markdown(f'<span class="small">{with_err}</span>', unsafe_allow_html=True)
     if len(full) > TREE_ROWS:
         st.toggle(f"הצג את כל הפתיחות ({len(full)})", key="rp_all")
     return full[full.key == sel].iloc[0]
@@ -210,9 +208,11 @@ def page_repertoire():
                   f'<p class="plan-sub">{you("איך אתה מצליח", "איך מצליח השחקן")} בכל פתיחה לעומת {you("הממוצע שלך", "הממוצע שלו")} ב{COLORS[c]} '
                   f'({pct(t.base.iat[0])} ב־{games:,} משחקים).</p>', unsafe_allow_html=True)
     _summary(c)
-    md('<div class="sec" style="margin-top:1rem"><h3>כל הפתיחות</h3><p>בחרו שורה בתיבת הסימון משמאל כדי לראות את הטעויות בה.</p></div>')
+    st.caption("כל הפתיחות · לחצו על שם פתיחה כדי לראות את הטעויות בה")
     tcol, dcol = st.columns([1.5, 1], gap="large")
     with tcol:
         op = _tree_table(c)
     with dcol:
         _node_mistakes(op)
+    if st.toggle("הצג גרף של כל הפתיחות", False, key=f"rp_chart_{c}"):
+        st.altair_chart(weak_chart(ctx.tbl[ctx.tbl.color == c]), width="stretch")

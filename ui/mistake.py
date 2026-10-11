@@ -32,7 +32,7 @@ def replies_html(p, punish_first):
     rows = "".join(
         f'<tr><td><span class="ltr">{esc(move_label(p["ply"] + 1, r["san"]))}</span>'
         f'{" <span class=\'badge b-red\'>העונש</span>" if r["san"] == punish_first else ""}</td>'
-        f'<td>{r["n"]}</td><td>{pct(r["score"])}</td></tr>' for r in p["replies"][:4])
+        f'<td>{r["n"]}</td><td>{pct(r["score"])}</td></tr>' for r in p["replies"][:3])
     return (f'<div class="note" style="margin-top:10px"><b>מה היריבים ענו בפועל</b></div>'
             f'<table class="replies"><tr><th>תשובה</th><th>משחקים</th><th>{you("הציון שלך", "ציון")}</th></tr>{rows}</table>')
 
@@ -194,8 +194,7 @@ def _details(p, x, lv):
            f'<div><div class="k">הממוצע בצבע</div><div class="v">{pct(p["avg"])}</div></div></div>'
            f'<div class="note">{cost_note(p)}</div>'
            f'{replies_html(p, x["punish_first"])}'
-           f'<div class="note" style="margin-top:10px">{usual_html(p)}</div>'
-           f'<div class="note" style="margin-top:10px">המשחקים עצמם מופיעים על הלוח, בלשונית "{you("המשחק שלי", "המשחק")}".</div>')
+           f'<div class="note" style="margin-top:10px">{usual_html(p)}</div>')
     with st.expander("מה משחקים ברמה שלך"):
         if lv and lv.get("ex"):
             md(level_html(p, lv) + explorer_html(lv["ex"], p["color"]))

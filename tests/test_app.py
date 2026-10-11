@@ -163,7 +163,7 @@ def test_settings_change_clears_the_trainer():
     at = run("plan3")
     at = next(b for b in at.button if b.key == "fix_0").click().run()
     assert at.session_state["mk_drill"] is True
-    at.radio(key="thr").set_value(8)
+    at.radio(key="thr_choice").set_value(8)
     at = at.run()
     assert at.session_state["mk_drill"] is False
 
@@ -211,3 +211,18 @@ def test_no_prefix_letter_glued_to_a_latin_name():
     at = run("plan0")      # not analysed: the subtitle names the player
     text_ = " ".join(m.value for m in at.markdown)
     assert "לplan0" not in text_
+
+
+def test_repertoire_row_button_selects_the_node():
+    at = run("plan3", "repertoire")
+    rows = [b for b in at.button if b.key and b.key.startswith("op_white_")]
+    assert len(rows) >= 2
+    target = rows[1]
+    at = target.click().run()
+    assert at.session_state["op_key"] == target.key[len("op_white_"):]
+
+
+def test_sensitivity_radio_shows_the_real_value_after_navigation():
+    at = run("plan3", "home", thr=8)
+    at = next(b for b in at.button if b.key == "fix_0").click().run()
+    assert at.radio(key="thr_choice").value == at.session_state["thr"] == 8

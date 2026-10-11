@@ -17,6 +17,12 @@ def _reset_drill():
     st.session_state.update(mk_drill=False, quiz=False)
 
 
+def _set_threshold():
+    """The radio's own key holds only what the widget shows; the real value lives in session_state['thr']."""
+    st.session_state.thr = st.session_state.thr_choice
+    _reset_drill()
+
+
 SENSITIVITY = {20: "רק טעויות גסות", 12: "רגיל", 8: "גם אי־דיוקים"}
 SENSITIVITY_HELP = {20: "מסעים שמורידים הרבה מהסיכויים", 12: "מומלץ", 8: "יותר טעויות, חלקן קטנות"}
 
@@ -83,9 +89,12 @@ def settings_controls(pop, players):
         colors = [pick] if pick in COLORS else list(COLORS)
         if st.session_state.get("thr") not in SENSITIVITY:  # a value left over from the old slider
             st.session_state.thr = C.ERROR_WIN_DROP
-        thr = st.radio("רגישות: כמה גדולה טעות צריכה להיות", list(SENSITIVITY), key="thr",
+        # `index` is part of the widget's identity: when the value is changed elsewhere (lower sensitivity, tests)
+        # the radio is rebuilt with the right option selected instead of keeping a stale frontend state
+        st.radio("רגישות: כמה גדולה טעות צריכה להיות", list(SENSITIVITY), key="thr_choice",
+                       index=list(SENSITIVITY).index(st.session_state.thr),
                        format_func=SENSITIVITY.get, captions=[SENSITIVITY_HELP[v] for v in SENSITIVITY],
-                       on_change=_reset_drill,
+                       on_change=_set_threshold,
                        help="\"רק טעויות גסות\" מציג מסעים שמורידים את סיכויי הניצחון בלפחות 20 נקודות אחוז, "
                             "\"רגיל\" 12, \"גם אי־דיוקים\" 8. השינוי מיידי, בלי להריץ שוב את המנוע.")
         if C.lichess_token():
@@ -96,6 +105,7 @@ def settings_controls(pop, players):
         stamp = data_stamp(user)
         analyzed = bool(stamp and stamp[2])
         engine_panel(user, analyzed, stamp)
+        thr = st.session_state.thr
         df, all_errors = get_data(user, stamp, thr)
         avail = [s for s in SPEEDS if s in set(df.speed)] + sorted(set(df.speed) - set(SPEEDS))
         if len(avail) > 1:
