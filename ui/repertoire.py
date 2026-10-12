@@ -6,7 +6,7 @@ import streamlit as st
 
 from chessapp import config as C
 
-from .common import (COLORS, CONF, GREEN, LRM, RED, ltr_text, board_svg, clip, empty, esc, md, move_label, moves_html, pct, rtl_table,
+from .common import (COLORS, CONF, GREEN, LRM, RED, in_games, ltr_text, board_svg, clip, empty, esc, md, move_label, moves_html, pct, rtl_table,
                      status_map, tail_moves, wdl, you)
 from .ctx import ctx
 from .data import tr_key
@@ -56,13 +56,15 @@ CONF_HELP = ("ההבדל מהממוצע: \"בטוח\" = הרבה משחקים ו
              "\"מוקדם לדעת\" = מעט משחקים או הבדל קטן, ואפשר שהוא מקרי.")
 
 
-def _rows(rows, tone):
+def _rows(rows, tone, show_moves=()):
     out = []
     for r in rows:
         label, ctone = CONF_HE[r.conf]
+        moves = (f'<div class="moves" style="font-size:.78rem;line-height:1.5">{esc(tail_moves(r.group, 26))}</div>'
+                 if r.opening in show_moves else "")
         out.append(
             f'<div class="orow"><div dir="ltr" style="text-align:right"><div class="nm">{esc(clip(r.opening, 34))}</div>'
-            f'</div>'
+            f'{moves}</div>'
             f'<div style="display:flex;align-items:center;gap:10px;white-space:nowrap">'
             f'<span class="pill {ctone}" title="{esc(CONF_HELP)}">{label}</span>'
             f'<span class="sc" style="color:var(--{tone})">{pct(r.score)}</span></div></div>')
@@ -87,13 +89,15 @@ def _summary(c):
         return
     weak, wnote = _candidates(t, -1)
     strong, snote = _candidates(t, 1)
+    names = [r.opening for r in strong[:1]] + [r.opening for r in weak[:1]]
+    same = {n for n in names if names.count(n) > 1}
     a, b = st.columns(2, gap="large")
     with a, st.container(border=True, key=f"card_strong_{c}", height="stretch"):
         md('<div class="plan-title" style="color:var(--green)">▲ חוזקות</div>'
-           + (f'<div class="note">{snote}</div>' if snote else "") + _rows(strong[:1], "green"))
+           + (f'<div class="note">{snote}</div>' if snote else "") + _rows(strong[:1], "green", same))
     with b, st.container(border=True, key=f"card_weak_{c}", height="stretch"):
         md('<div class="plan-title" style="color:#dc2626">▼ חולשות</div>'
-           + (f'<div class="note">{wnote}</div>' if wnote else "") + _rows(weak[:1], "red"))
+           + (f'<div class="note">{wnote}</div>' if wnote else "") + _rows(weak[:1], "red", same))
 
 
 def _default_node(full, c):
@@ -172,7 +176,7 @@ def _node_mistakes(op):
             md(f'<div class="plan-title" style="font-size:1rem">הטעות שחוזרת כאן</div>'
                f'<div class="plan-line"><b class="ltr">{esc(move_label(top["ply"], top["played"]))}</b> במקום '
                f'<b class="ltr">{esc(move_label(top["ply"], top["best_san"] or "?"))}</b> · '
-               f'ב־{top["mistakes"]} מתוך {top["reached"]} משחקים</div>')
+               f'{in_games(top["mistakes"], top["reached"])}</div>')
             st.button("לפתוח את הטעות ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),),
                       type="primary")
         for i, p in enumerate(found[1:3], 1):
@@ -185,9 +189,8 @@ def _node_mistakes(op):
                        f'{p["count"]} פעמים</span>', unsafe_allow_html=True)
             c.button("פתח ←", key=f"rp_mk_{op.key}_{i}", on_click=open_mistake, args=(tr_key(p),), width="stretch")
         more = len(found) - 3
-        if more > 0 or singles:
-            st.caption((f"ועוד {more} שחוזרות" if more > 0 else "") + (" · " if more > 0 and singles else "")
-                       + (f"ועוד {singles} חד־פעמיות" if singles else "") + ". אפשר לראות את כולן במסך הטעויות.")
+        if more > 0:
+            st.caption(f"ועוד {more} שחוזרות. אפשר לראות את כולן במסך הטעויות.")
 
 
 def page_repertoire():
@@ -200,10 +203,8 @@ def page_repertoire():
                                    format_func={"white": "○ לבן", "black": "● שחור"}.get, width="stretch")
     c = c if c in avail else avail[0]
     t = ctx.tbl[ctx.tbl.color == c]
-    games = int((ctx.fdf.color == c).sum())
     head.markdown(f'<h1 class="plan-h1" style="margin-top:0">{you("הפתיחות שלך", "הפתיחות של " + esc(ctx.user))}</h1>'
-                  f'<p class="plan-sub">{you("איך אתה מצליח", "איך מצליח השחקן")} בכל פתיחה לעומת {you("הממוצע שלך", "הממוצע שלו")} ב{COLORS[c]} '
-                  f'.</p>', unsafe_allow_html=True)
+                  f'<p class="plan-sub">{you("איך אתה מצליח", "איך מצליח השחקן")} בכל פתיחה לעומת {you("הממוצע שלך", "הממוצע שלו")} ב{COLORS[c]}.</p>', unsafe_allow_html=True)
     _summary(c)
     st.caption("כל הפתיחות · לחצו על שם פתיחה כדי לראות את הטעויות בה")
     tcol, dcol = st.columns([1.5, 1], gap="large")

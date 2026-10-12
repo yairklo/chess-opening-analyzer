@@ -4,7 +4,7 @@ import streamlit as st
 
 from chessapp import config as C
 
-from .common import COLORS, GREEN, RED, bidi, board_svg, clip, empty, esc, md, move_label, pct, tail_moves, you
+from .common import COLORS, GREEN, RED, bidi, board_svg, in_games, clip, empty, esc, md, move_label, pct, tail_moves, you
 from .ctx import ctx
 from .data import explain_p, recurring, start_analysis, tr_key
 from .names import en_sub, he_title
@@ -51,7 +51,7 @@ def mistake_card(i, p):
         mid.image(board_svg(chess.Board(p["fen"]), p["color"], None,
                             [(p["played_uci"], RED), (p["best_uci"], GREEN)], size=240), width=240)
         md(f'<div class="plan-line">{you("שיחקת", "שוחק")} <b class="ltr">{esc(move_label(p["ply"], p["played"]))}</b> '
-           f'ב־{p["mistakes"]} מתוך {p["reached"]} משחקים</div>'
+           f'{in_games(p["mistakes"], p["reached"])}</div>'
            f'<div class="plan-line">עדיף <b class="ltr">{esc(move_label(p["ply"], p["best_san"] or "?"))}</b></div>'
            f'<div class="plan-reason">{bidi(x.get("why_short") or short_reason(x["why"], 16))}</div>')
         st.button("לתקן עכשיו ←", key=f"fix_{i}", on_click=open_mistake, args=(tr_key(p),), type="primary",

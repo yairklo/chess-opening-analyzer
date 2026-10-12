@@ -101,9 +101,9 @@ def short_name(r):
     if pn and r.opening.startswith(pn + ": "):
         return r.opening[len(pn) + 2:]
     if pn and r.opening == pn:  # same name: show the moves this branch adds instead
-        k = int(par.plies.iat[0])
-        return " ".join(move_label(i, m) if i % 2 or i == k + 1 else m
-                        for i, m in enumerate(r.group.split()[k:], k + 1))
+        toks = r.group.split()
+        k = max(int(par.plies.iat[0]), len(toks) - 2)
+        return " ".join(move_label(i, m) if i % 2 or i == k + 1 else m for i, m in enumerate(toks[k:], k + 1))
     return r.opening
 
 

@@ -7,7 +7,7 @@ from chessapp import config as C
 from chessapp.lines import study_pgn
 
 from .names import en_sub
-from .common import (bidi, COLORS, GREEN, LRM, RED, RESULTS, moves_html, position_at, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
+from .common import (bidi, in_games, COLORS, GREEN, LRM, RED, RESULTS, moves_html, position_at, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
                      game_links, line_html, md, move_label, pct, rtl_table, set_state, status_map, you)
 from .ctx import ctx
 from .data import explain_p, find_mistake, level_html, level_view, start_analysis, tr_key
@@ -253,7 +253,7 @@ def page_mistakes():
            f' <span class="mk-sub">{esc(en_sub(p["opening"], COLORS[p["color"]]))}</span></div>'
            f'<div class="mk-h1"><bdi dir="ltr">{played_lbl}?</bdi><span class="arrow-sep">←</span><bdi dir="ltr">{best_lbl}</bdi></div>'
            f'<div class="cmp"><div class="bad"><div class="k">{you("שיחקת", "שוחק")}</div><div class="v">{played_lbl}</div>'
-           f'<div class="s">ב־{p["mistakes"]} מתוך {p["reached"]} משחקים</div></div>'
+           f'<div class="s">{in_games(p["mistakes"], p["reached"])}</div></div>'
            f'<div class="good"><div class="k">עדיף</div><div class="v">{best_lbl}</div>'
            f'<div class="s">המסע של המנוע</div></div></div>'
            f'<div class="why"><b>למה זו טעות:</b> {bidi(x["why"])}</div>')

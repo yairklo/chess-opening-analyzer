@@ -211,6 +211,11 @@ def ltr_text(*parts):
     return "⁧" + " ".join(f"⁦{p}⁩" for p in parts if p) + "⁩"
 
 
+def in_games(mistakes, reached):
+    """'ב־5 משחקים' when every visit was the mistake, else 'ב־3 מתוך 7 משחקים'."""
+    return f"ב־{mistakes} משחקים" if mistakes == reached else f"ב־{mistakes} מתוך {reached} משחקים"
+
+
 def clip(text, n):
     """Shorten at a word boundary, with the ellipsis at the end of the (left-to-right) text."""
     if len(text) <= n:
