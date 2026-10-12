@@ -50,7 +50,7 @@ def open_mistake(key):
     st.session_state.update(page="mistakes", mk_sel=key, mk_drill=False, quiz=False)
 
 
-TREE_ROWS = 10
+TREE_ROWS = 6
 CONF_HE = {"high": ("בטוח", "green"), "mid": ("כנראה", "amber"), "low": ("מוקדם לדעת", "gray")}
 CONF_HELP = ("ההבדל מהממוצע: \"בטוח\" = הרבה משחקים והבדל ברור, \"כנראה\" = סביר, "
              "\"מוקדם לדעת\" = מעט משחקים או הבדל קטן, ואפשר שהוא מקרי.")
@@ -62,10 +62,9 @@ def _rows(rows, tone):
         label, ctone = CONF_HE[r.conf]
         out.append(
             f'<div class="orow"><div dir="ltr" style="text-align:right"><div class="nm">{esc(clip(r.opening, 34))}</div>'
-            f'<div class="moves" style="font-size:.78rem;line-height:1.5">{esc(tail_moves(r.group, 30))}</div></div>'
+            f'</div>'
             f'<div style="display:flex;align-items:center;gap:10px;white-space:nowrap">'
             f'<span class="pill {ctone}" title="{esc(CONF_HELP)}">{label}</span>'
-            f'<span class="muted small">{r.games} משחקים</span>'
             f'<span class="sc" style="color:var(--{tone})">{pct(r.score)}</span></div></div>')
     return "".join(out)
 
@@ -123,20 +122,18 @@ def _tree_table(c):
     t = full if show_all or len(full) <= TREE_ROWS else full.head(TREE_ROWS)
     if sel not in set(t.key):
         t = pd.concat([t, full[full.key == sel]]).reset_index(drop=True)
-    w = [5.4, 1.1, 1.1]
+    w = [6, 1.2]
     rows = st.container(key="tree_rows")
     head = rows.columns(w)
-    for col, label in zip(head, ["פתיחה", "משחקים", "ציון"]):
+    for col, label in zip(head, ["פתיחה", "ציון"]):
         col.markdown(f'<span class="muted small">{label}</span>', unsafe_allow_html=True)
     for r in t.itertuples():
-        a, b, s_ = rows.columns(w, vertical_alignment="center")
+        a, s_ = rows.columns(w, vertical_alignment="center")
         name = clip(short_name(r), 30)
-        label = ltr_text(name) + ("  ⚠" if r.toxic else "")
+        label = ("┘ " if r.depth else "") + ltr_text(name) + ("  ⚠" if r.toxic else "")
         with a.container(key=f"opd{min(r.depth, 3)}_{c}_{r.key}"):
             st.button(label, key=f"op_{c}_{r.key}", on_click=select_node, args=(r.key,),
-                      type="primary" if r.key == sel else "secondary", width="stretch",
-                      help=f"{tail_moves(r.group, 40)}  {r.opening}")
-        b.markdown(f'<span class="small">{r.games}</span>', unsafe_allow_html=True)
+                      type="primary" if r.key == sel else "secondary", width="stretch")
         s_.markdown(f'<span class="small">{pct(r.score)}</span>', unsafe_allow_html=True)
     if len(full) > TREE_ROWS:
         st.toggle(f"הצג את כל הפתיחות ({len(full)})", key="rp_all")
@@ -149,7 +146,7 @@ def _node_mistakes(op):
         toxic = ' <span class="pill red">בעייתית</span>' if op.toxic else ""
         md(f'<div class="plan-title">{esc(he_title(op.opening))}{toxic}</div>'
            f'<div class="plan-en" dir="ltr" style="text-align:right">{esc(op.opening)}</div>'
-           f'{moves_html(op.group.split())}'
+           f'<div class="moves" style="font-size:.85rem">{esc(tail_moves(op.group, 28))}</div>'
            f'<div class="note"><b>{pct(op.score)}</b> ב־{op.games} משחקים, '
            f'<span dir="ltr">{diff:+.0f}%</span> מהממוצע {you("שלך", "של השחקן")} ב{COLORS[op.color]}.</div>'
            f'{wdl(op.win, op.draw, op.loss, legend=False)}')
@@ -179,10 +176,13 @@ def _node_mistakes(op):
             st.button("לפתוח את הטעות ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),),
                       type="primary")
         for i, p in enumerate(found[1:3], 1):
-            a, b, c = st.columns([3, 2.2, 1.6], vertical_alignment="center")
+            a, b, c = st.columns([3, 1.8, 1.4], vertical_alignment="center")
             a.markdown(f'<span dir="ltr">{esc(move_label(p["ply"], p["played"]))}</span> ← '
                        f'<span dir="ltr">{esc(move_label(p["ply"], p["best_san"] or "?"))}</span>', unsafe_allow_html=True)
-            b.caption(f'{status_map()[p["status"]][0]} · ' + (f'{p["count"]} פעמים' if p["count"] > 1 else "פעם אחת"))
+            tone = status_map()[p["status"]][1]
+            b.markdown(f'<span class="small muted" title="{status_map()[p["status"]][0]}"><span style="color:var(--'
+                       f'{ {"red": "red", "amber": "amber", "green": "green"}.get(tone, "soft") }">●</span> '
+                       f'{p["count"]} פעמים</span>', unsafe_allow_html=True)
             c.button("פתח ←", key=f"rp_mk_{op.key}_{i}", on_click=open_mistake, args=(tr_key(p),), width="stretch")
         more = len(found) - 3
         if more > 0 or singles:
@@ -203,7 +203,7 @@ def page_repertoire():
     games = int((ctx.fdf.color == c).sum())
     head.markdown(f'<h1 class="plan-h1" style="margin-top:0">{you("הפתיחות שלך", "הפתיחות של " + esc(ctx.user))}</h1>'
                   f'<p class="plan-sub">{you("איך אתה מצליח", "איך מצליח השחקן")} בכל פתיחה לעומת {you("הממוצע שלך", "הממוצע שלו")} ב{COLORS[c]} '
-                  f'({pct(t.base.iat[0])} ב־{games:,} משחקים).</p>', unsafe_allow_html=True)
+                  f'.</p>', unsafe_allow_html=True)
     _summary(c)
     st.caption("כל הפתיחות · לחצו על שם פתיחה כדי לראות את הטעויות בה")
     tcol, dcol = st.columns([1.5, 1], gap="large")

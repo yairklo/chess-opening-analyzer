@@ -164,7 +164,7 @@ text-decoration:none;font-size:.78rem;font-family:'JetBrains Mono',monospace;}
 [class*="st-key-op_"] button p{text-align:right!important;margin:0;}
 [class*="st-key-opd1_"] button > div{padding-right:1.4rem!important;box-sizing:border-box;} [class*="st-key-opd2_"] button > div{padding-right:2.6rem!important;box-sizing:border-box;}
 [class*="st-key-opd3_"] button > div{padding-right:3.8rem!important;box-sizing:border-box;}
-[class*="st-key-opd1_"] button::before,[class*="st-key-opd2_"] button::before,[class*="st-key-opd3_"] button::before{content:"└";color:#9ca3af;margin-left:.35rem;}
+[class*="st-key-op_"] button[kind="primary"]{background:#eef2ff!important;color:#1e3a8a!important;border:1px solid #c7d2fe!important;}
 </style>
 """
 
