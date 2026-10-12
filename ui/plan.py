@@ -107,6 +107,13 @@ def short_name(r):
     return r.opening
 
 
+def last_plies(group, n=2):
+    """The last `n` plies of a line with the move number: '4.d3 Nf6'."""
+    toks = group.split()
+    k = max(0, len(toks) - n)
+    return " ".join(move_label(i, m) if i % 2 or i == k + 1 else m for i, m in enumerate(toks[k:], k + 1))
+
+
 def node_games(op):
     """All filtered games that start with the node's moves (the node row sums its whole subtree)."""
     pre = op.group.split()

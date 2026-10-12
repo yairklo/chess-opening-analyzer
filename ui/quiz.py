@@ -8,7 +8,7 @@ from chessapp import config as C
 from chessapp.stats import SORTS
 
 from .board import chess_board, fresh_move
-from .common import COLORS, GREEN, RED, arrow_legend, chip, empty, en, esc, game_links, md, moves_html, set_state
+from .common import COLORS, GREEN, RED, arrow_legend, chip, in_times, empty, en, esc, game_links, md, moves_html, set_state
 from .ctx import ctx
 from .data import level_view, recurring
 
@@ -95,7 +95,7 @@ def page_quiz():
                 if ans == p["best_san"]:
                     st.success(f"נכון! {p['best_san']} הוא המסע ש־Stockfish ממליץ עליו.", icon=":material/check_circle:")
                 elif ans == p["played"]:
-                    st.error(f"זה בדיוק המסע ששיחקת במשחקים ({p['mistakes']} מתוך {p['reached']} פעמים). "
+                    st.error(f"זה בדיוק המסע ששיחקת במשחקים ({in_times(p['mistakes'], p['reached'])}). "
                              f"עדיף {p['best_san']}.", icon=":material/cancel:")
                 else:
                     st.warning(f"לא זה. המסע המומלץ הוא {p['best_san']}; במשחקים שיחקת {p['played']}.", icon=":material/info:")
@@ -103,4 +103,4 @@ def page_quiz():
                    + game_links(p["games"], p["color"], p["ply"], 6))
                 st.button("לעמדה הבאה", type="primary", on_click=next_q, width="stretch", icon=":material/arrow_back:")
             else:
-                md(f'<div class="note">כאן טעית ב‑{p["mistakes"]} מתוך {p["reached"]} הפעמים שהגעת לעמדה.</div>')
+                md(f'<div class="note">כאן טעית {in_times(p["mistakes"], p["reached"])} שהגעת לעמדה.</div>')

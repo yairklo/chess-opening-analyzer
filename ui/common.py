@@ -216,6 +216,11 @@ def in_games(mistakes, reached):
     return f"ב־{mistakes} משחקים" if mistakes == reached else f"ב־{mistakes} מתוך {reached} משחקים"
 
 
+def in_times(mistakes, reached):
+    """'בכל 5 הפעמים' when every visit was the mistake, else 'ב־3 מתוך 7 הפעמים'."""
+    return f"בכל {mistakes} הפעמים" if mistakes == reached else f"ב־{mistakes} מתוך {reached} הפעמים"
+
+
 def clip(text, n):
     """Shorten at a word boundary, with the ellipsis at the end of the (left-to-right) text."""
     if len(text) <= n:

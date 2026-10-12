@@ -11,7 +11,7 @@ from .common import (COLORS, CONF, GREEN, LRM, RED, in_games, ltr_text, board_sv
 from .ctx import ctx
 from .data import tr_key
 from .names import he_title
-from .plan import focus_openings, node_games, non_overlapping, short_name
+from .plan import focus_openings, last_plies, node_games, non_overlapping, short_name
 
 
 
@@ -60,7 +60,7 @@ def _rows(rows, tone, show_moves=()):
     out = []
     for r in rows:
         label, ctone = CONF_HE[r.conf]
-        moves = (f'<div class="moves" style="font-size:.78rem;line-height:1.5">{esc(tail_moves(r.group, 26))}</div>'
+        moves = (f'<div class="moves" style="font-size:.78rem;line-height:1.5">{esc(last_plies(r.group))}</div>'
                  if r.opening in show_moves else "")
         out.append(
             f'<div class="orow"><div dir="ltr" style="text-align:right"><div class="nm">{esc(clip(r.opening, 34))}</div>'
@@ -131,9 +131,15 @@ def _tree_table(c):
     head = rows.columns(w)
     for col, label in zip(head, ["פתיחה", "ציון"]):
         col.markdown(f'<span class="muted small">{label}</span>', unsafe_allow_html=True)
+    labels = {r.key: clip(short_name(r), 30) for r in t.itertuples()}
+    seen = {}
+    for k_, v_ in labels.items():
+        seen.setdefault(v_, []).append(k_)
     for r in t.itertuples():
         a, s_ = rows.columns(w, vertical_alignment="center")
-        name = clip(short_name(r), 30)
+        name = labels[r.key]
+        if len(seen[name]) > 1:   # two rows with the same name: tell them apart by their last ply
+            name = f"{name} · {last_plies(r.group, 1)}"
         label = ("┘ " if r.depth else "") + ltr_text(name) + ("  ⚠" if r.toxic else "")
         with a.container(key=f"opd{min(r.depth, 3)}_{c}_{r.key}"):
             st.button(label, key=f"op_{c}_{r.key}", on_click=select_node, args=(r.key,),

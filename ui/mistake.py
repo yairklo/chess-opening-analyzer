@@ -7,7 +7,7 @@ from chessapp import config as C
 from chessapp.lines import study_pgn
 
 from .names import en_sub
-from .common import (bidi, in_games, COLORS, GREEN, LRM, RED, RESULTS, moves_html, position_at, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
+from .common import (bidi, in_games, in_times, COLORS, GREEN, LRM, RED, RESULTS, moves_html, position_at, arrow_legend, badge, board_svg, chip, empty, en, esc, explorer_html, fmt_date,
                      game_links, line_html, md, move_label, pct, rtl_table, set_state, status_map, you)
 from .ctx import ctx
 from .data import explain_p, find_mistake, level_html, level_view, start_analysis, tr_key
@@ -189,7 +189,7 @@ def _game_board(p):
 def _details(p, x, lv):
     with st.expander(f"מה קרה במשחקים שלך ({p['count']})"):
         md(f'<div class="stats s3"><div><div class="k">{you("חזרת על הטעות", "חזרות על הטעות")}</div>'
-           f'<div class="v">{p["mistakes"]} מתוך {p["reached"]}</div></div>'
+           f'<div class="v">{in_times(p["mistakes"], p["reached"])}</div></div>'
            f'<div><div class="k">הציון במשחקים האלה</div><div class="v">{pct(p["score"])}</div></div>'
            f'<div><div class="k">הממוצע בצבע</div><div class="v">{pct(p["avg"])}</div></div></div>'
            f'<div class="note">{cost_note(p)}</div>'
