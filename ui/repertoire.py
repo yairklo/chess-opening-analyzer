@@ -167,14 +167,14 @@ def _node_mistakes(op):
            f'<div class="plan-en" dir="ltr" style="text-align:right">{esc(op.opening)}</div>')
         board, last = position_at(op.group.split(), int(op.plies))
         left, right = st.columns([1.35, 1], vertical_alignment="center")
-        left.image(board_svg(board, op.color, last, [], size=150), width=150)
+        left.image(board_svg(board, op.color, last, [], size=190), width=190)
         with right:
             md(f'<div class="moves" style="font-size:.85rem">{esc(tail_moves(op.group, 24))}</div>'
                f'<div class="note"><b>{pct(op.score)}</b> ב־{op.games} משחקים, '
                f'<span dir="ltr">{diff:+.0f}%</span> מהממוצע {you("שלך", "של השחקן")} ב{COLORS[op.color]}.</div>')
-        if ctx.me:
-            st.button("לתרגל את הפתיחה ←", key=f"rp_practice_{op.key}", on_click=start_practice, args=(op.key,),
-                      type="primary", width="stretch")
+            if ctx.me:
+                st.button("לתרגל ←", key=f"rp_practice_{op.key}", on_click=start_practice, args=(op.key,),
+                          type="primary", width="stretch", help="תרגול הפתיחה: ממשיכים לשחק את הקו")
         if not ctx.analyzed:
             md('<div class="note" style="margin-top:12px">הטעויות עוד לא נותחו במנוע. אפשר להפעיל את הניתוח מההגדרות.</div>')
             return
@@ -190,12 +190,12 @@ def _node_mistakes(op):
             return
         found = repeated
         top = found[0]
-        txt, go = st.columns([2.6, 1.4], vertical_alignment="center")
-        txt.markdown(f'<div class="plan-line"><b class="ltr">{esc(move_label(top["ply"], top["played"]))}</b> במקום '
+        txt, go = st.columns([3.4, 1], vertical_alignment="center")
+        txt.markdown(f'<div class="plan-line" style="white-space:nowrap"><b class="ltr">'
+                     f'{esc(move_label(top["ply"], top["played"]))}</b> ← '
                      f'<b class="ltr">{esc(move_label(top["ply"], top["best_san"] or "?"))}</b> · '
                      f'{in_games(top["mistakes"], top["reached"])}</div>', unsafe_allow_html=True)
-        go.button("פתח ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),), type="primary",
-                  width="stretch")
+        go.button("פתח ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),), width="stretch")
         for i, p in enumerate(found[1:3], 1):
             a, b, c = st.columns([3, 1.8, 1.4], vertical_alignment="center")
             a.markdown(f'<span dir="ltr">{esc(move_label(p["ply"], p["played"]))}</span> ← '
