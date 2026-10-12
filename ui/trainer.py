@@ -73,7 +73,7 @@ def drill(p):
     key = tr_key(p)
     lv = level_view(p)
     mine_first = False
-    if lv and lv.get("works"):
+    if lv and lv.get("works") and p.get("played_uci"):
         mine_first = st.radio("מה לתרגל?", [False, True], horizontal=True, key=f"tr_variant_{key}",
                               format_func={False: f"הקו של המנוע ({p['best_san']})",
                                            True: f"המסע שלי ({p['played']}) והמשכו – הוא עובד ברמה שלי"}.get)

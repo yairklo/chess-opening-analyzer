@@ -21,10 +21,10 @@ def usual_html(p):
     if p["usual"] is None:
         head = f'{you("אין לך מסע קבוע כאן", "אין מסע קבוע בעמדה הזו")}: כמה מסעים שוחקו אותו מספר פעמים.'
     elif p["usual"] == p["played"]:
-        head = f'<b>{you("זה המסע הקבוע שלך כאן", "זה המסע הקבוע בעמדה הזו")}</b> ({p["usual_n"]} מתוך {p["reached"]} פעמים).'
+        head = f'<b>{you("זה המסע הקבוע שלך כאן", "זה המסע הקבוע בעמדה הזו")}</b> ({in_times(p["usual_n"], p["reached"])}).'
     else:
         head = (f'{you("בדרך כלל אתה משחק כאן", "המסע הרגיל בעמדה הוא")} <span class="ltr">{esc(p["usual"])}</span> '
-                f'({p["usual_n"]} מתוך {p["reached"]}), והטעות היא סטייה.')
+                f'({in_times(p["usual_n"], p["reached"])}), והטעות היא סטייה.')
     return f'{head} כל המסעים בעמדה: {moves}'
 
 

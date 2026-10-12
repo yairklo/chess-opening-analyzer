@@ -166,15 +166,16 @@ def _node_mistakes(op):
         md(f'<div class="plan-title">{esc(he_title(op.opening))}{toxic}</div>'
            f'<div class="plan-en" dir="ltr" style="text-align:right">{esc(op.opening)}</div>')
         board, last = position_at(op.group.split(), int(op.plies))
-        _, mid, _ = st.columns([1, 6, 1])
-        mid.image(board_svg(board, op.color, last, [], size=300), width=300)
-        if ctx.me:
-            st.button("לתרגל את הפתיחה ←", key=f"rp_practice_{op.key}", on_click=start_practice, args=(op.key,),
-                      type="primary", width="stretch")
-        md(f'<div class="moves" style="font-size:.85rem">{esc(tail_moves(op.group, 28))}</div>'
-           f'<div class="note"><b>{pct(op.score)}</b> ב־{op.games} משחקים, '
-           f'<span dir="ltr">{diff:+.0f}%</span> מהממוצע {you("שלך", "של השחקן")} ב{COLORS[op.color]}.</div>'
-           f'{wdl(op.win, op.draw, op.loss, legend=False)}')
+        left, right = st.columns([1, 1.15], vertical_alignment="center")
+        left.image(board_svg(board, op.color, last, [], size=190), width=190)
+        with right:
+            md(f'<div class="moves" style="font-size:.85rem">{esc(tail_moves(op.group, 24))}</div>'
+               f'<div class="note"><b>{pct(op.score)}</b> ב־{op.games} משחקים, '
+               f'<span dir="ltr">{diff:+.0f}%</span> מהממוצע {you("שלך", "של השחקן")} ב{COLORS[op.color]}.</div>'
+               f'{wdl(op.win, op.draw, op.loss, legend=False)}')
+            if ctx.me:
+                st.button("לתרגל את הפתיחה ←", key=f"rp_practice_{op.key}", on_click=start_practice, args=(op.key,),
+                          type="primary", width="stretch")
         if not ctx.analyzed:
             md('<div class="note" style="margin-top:12px">הטעויות עוד לא נותחו במנוע. אפשר להפעיל את הניתוח מההגדרות.</div>')
             return
@@ -222,7 +223,8 @@ def _practice_screen(key):
     op = row.iloc[0]
     st.button("→ חזרה לפתיחות", key="rp_back", on_click=stop_practice)
     md(f'<div class="plan-title">{esc(he_title(op.opening))}</div>'
-       f'<div class="note">תרגול הפתיחה: מגיעים לעמדה אחרי {esc(tail_moves(op.group, 40))}, וממשיכים לשחק את הקו.</div>')
+       f'<div class="note">תרגול הפתיחה: מגיעים לעמדה אחרי <span class="ltr">{esc(tail_moves(op.group, 40))}</span>, '
+       f'וממשיכים לשחק את הקו.</div>')
     drill(practice_position(op))
 
 
