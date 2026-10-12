@@ -156,6 +156,7 @@ text-decoration:none;font-size:.78rem;font-family:'JetBrains Mono',monospace;}
 .mk-sub{color:var(--muted);font-size:.84rem;margin:.2rem 0;}
 .cmp .s{font-size:.78rem;color:var(--muted);margin-top:2px;}
 .arrow-sep{color:var(--soft);font-weight:400;margin:0 .35em;}
+[class*="st-key-card_plan_"] > [data-testid="stElementContainer"]:last-child{margin-top:auto;}  /* the action sits at the bottom of every plan card */
 .st-key-tree_rows{gap:.2rem!important;}
 .st-key-tree_rows [data-testid="stVerticalBlock"],.st-key-tree_rows [data-testid="stHorizontalBlock"]{gap:.3rem!important;}
 [class*="st-key-op_"] button{min-height:2rem!important;padding:.1rem .6rem!important;font-size:.88rem;justify-content:flex-start!important;}
