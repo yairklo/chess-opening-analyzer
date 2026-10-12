@@ -30,7 +30,9 @@ def tr_opp(fen, rating, from_games):
 
 
 def tr_reset(key, mine_first, p):
-    st.session_state.update(tr_sig=(key, mine_first), tr_moves=[], tr_turn="me", tr_done=0, tr_quiet=0, tr_log=[],
+    mine = chess.WHITE if p["color"] == "white" else chess.BLACK
+    first = "me" if chess.Board(p["fen"]).turn == mine else "opp"
+    st.session_state.update(tr_sig=(key, mine_first), tr_moves=[], tr_turn=first, tr_done=0, tr_quiet=0, tr_log=[],
                             tr_answer=None, tr_decided=-1, tr_reason=None, tr_stop=None, tr_snaps=[])
     if mine_first:  # train the line that follows the player's own move (it works at the player's level)
         st.session_state.update(tr_moves=[p["played_uci"]], tr_turn="opp", tr_done=1,
@@ -121,9 +123,16 @@ def drill(p):
                 st.rerun()
             options = [dict(uci=o["uci"], label=o["san"], sub=" · ".join(o["tags"])) for o in opp]
             interactive, allow = True, {o["uci"] for o in opp}
+        shown, shown_last = board, last
+        if turn == "me" and ans and ans["ok"]:
+            # an accepted move is shown on the board (the piece moves), not as an arrow
+            shown = board.copy()
+            shown_last = chess.Move.from_uci(ans["uci"])
+            shown.push(shown_last)
+            arrows = []
         sig = abs(hash(st.session_state.get("tr_sig")))
-        val = chess_board(board, color, key=f"trb_{sig}_{len(sans)}_{turn}_{int(bool(ans))}", arrows=arrows,
-                          last=last, options=options, interactive=interactive, allow=allow, size=400, side=True)
+        val = chess_board(shown, color, key=f"trb_{sig}_{len(sans)}_{turn}_{int(bool(ans))}", arrows=arrows,
+                          last=shown_last, options=options, interactive=interactive, allow=allow, size=400, side=True)
         mv = fresh_move(val, "tr_token", board) if interactive else None
         if mv and turn == "me":
             tr_answer(board, info, mv, color)
@@ -140,7 +149,8 @@ def drill(p):
             if ans["is_best"]:
                 st.success(f"נכון! {chosen} הוא המסע הטוב ביותר.", icon=":material/check_circle:")
             elif ans["ok"]:
-                st.success(f"גם טוב: {chosen} רק {ans['drop']:.0f}% פחות מ־{best}. ממשיכים עם המסע שלך.",
+                st.success(f"גם טוב: {chosen} " + (f"שווה בערכו ל־{best}" if ans["drop"] < 1 else
+                                                   f"רק {ans['drop']:.0f}% פחות מ־{best}") + ". ממשיכים עם המסע שלך.",
                            icon=":material/check_circle:")
             else:
                 st.error(f"{chosen} מוריד את סיכויי הניצחון ב־{ans['drop']:.0f}%. הטוב ביותר: {best}. "

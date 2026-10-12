@@ -6,12 +6,13 @@ import streamlit as st
 
 from chessapp import config as C
 
-from .common import (COLORS, CONF, GREEN, LRM, RED, in_games, ltr_text, board_svg, clip, empty, esc, md, move_label, moves_html, pct, rtl_table,
+from .common import (COLORS, CONF, GREEN, LRM, RED, in_games, ltr_text, position_at, board_svg, clip, empty, esc, md, move_label, moves_html, pct, rtl_table,
                      status_map, tail_moves, wdl, you)
 from .ctx import ctx
 from .data import tr_key
 from .names import he_title
-from .plan import focus_openings, last_plies, node_games, non_overlapping, short_name
+from .plan import focus_openings, last_plies, node_games, non_overlapping, practice_position, short_name
+from .trainer import drill
 
 
 
@@ -48,6 +49,14 @@ def weak_chart(t):
 
 def open_mistake(key):
     st.session_state.update(page="mistakes", mk_sel=key, mk_drill=False, quiz=False)
+
+
+def start_practice(key):
+    st.session_state.rp_drill = key
+
+
+def stop_practice():
+    st.session_state.rp_drill = None
 
 
 TREE_ROWS = 6
@@ -155,8 +164,14 @@ def _node_mistakes(op):
     with st.container(border=True, key="card_opening"):
         toxic = ' <span class="pill red">בעייתית</span>' if op.toxic else ""
         md(f'<div class="plan-title">{esc(he_title(op.opening))}{toxic}</div>'
-           f'<div class="plan-en" dir="ltr" style="text-align:right">{esc(op.opening)}</div>'
-           f'<div class="moves" style="font-size:.85rem">{esc(tail_moves(op.group, 28))}</div>'
+           f'<div class="plan-en" dir="ltr" style="text-align:right">{esc(op.opening)}</div>')
+        board, last = position_at(op.group.split(), int(op.plies))
+        _, mid, _ = st.columns([1, 6, 1])
+        mid.image(board_svg(board, op.color, last, [], size=300), width=300)
+        if ctx.me:
+            st.button("לתרגל את הפתיחה ←", key=f"rp_practice_{op.key}", on_click=start_practice, args=(op.key,),
+                      type="primary", width="stretch")
+        md(f'<div class="moves" style="font-size:.85rem">{esc(tail_moves(op.group, 28))}</div>'
            f'<div class="note"><b>{pct(op.score)}</b> ב־{op.games} משחקים, '
            f'<span dir="ltr">{diff:+.0f}%</span> מהממוצע {you("שלך", "של השחקן")} ב{COLORS[op.color]}.</div>'
            f'{wdl(op.win, op.draw, op.loss, legend=False)}')
@@ -199,7 +214,22 @@ def _node_mistakes(op):
             st.caption(f"ועוד {more} שחוזרות. אפשר לראות את כולן במסך הטעויות.")
 
 
+def _practice_screen(key):
+    row = ctx.tbl[ctx.tbl.key == key]
+    if row.empty:
+        st.session_state.rp_drill = None
+        st.rerun()
+    op = row.iloc[0]
+    st.button("→ חזרה לפתיחות", key="rp_back", on_click=stop_practice)
+    md(f'<div class="plan-title">{esc(he_title(op.opening))}</div>'
+       f'<div class="note">תרגול הפתיחה: מגיעים לעמדה אחרי {esc(tail_moves(op.group, 40))}, וממשיכים לשחק את הקו.</div>')
+    drill(practice_position(op))
+
+
 def page_repertoire():
+    if st.session_state.get("rp_drill") and ctx.me:
+        _practice_screen(st.session_state.rp_drill)
+        return
     if ctx.tbl.empty:
         empty(f"אין פתיחה ששוחקה לפחות {C.MIN_GROUP_GAMES} פעמים בסינון הנוכחי.")
         return

@@ -68,14 +68,19 @@ def page_quiz():
         a, b = st.columns([1.15, 1], gap="large")
         with a:
             options = [] if ans else [dict(uci=board.parse_san(m).uci(), label=m) for m in opts]
-            val = chess_board(board, p["color"], key=f"quizb_{sig}_{i}_{int(bool(ans))}",
-                              arrows=[(p["played_uci"], RED), (p["best_uci"], GREEN)] if ans else [],
-                              options=options, interactive=not ans)
+            shown, shown_last, arrows = board, None, [(p["played_uci"], RED), (p["best_uci"], GREEN)] if ans else []
+            if ans and ans == p["best_san"]:   # the right move is played on the board
+                shown = board.copy()
+                shown_last = chess.Move.from_uci(p["best_uci"])
+                shown.push(shown_last)
+                arrows = []
+            val = chess_board(shown, p["color"], key=f"quizb_{sig}_{i}_{int(bool(ans))}", arrows=arrows,
+                              last=shown_last, options=options, interactive=not ans)
             mv = None if ans else fresh_move(val, "quiz_token", board)
             if mv:
                 answer(board.san(chess.Move.from_uci(mv)), p["best_san"])
                 st.rerun()
-            if ans:
+            if ans and ans != p["best_san"]:
                 md(arrow_legend())
         with b:
             md(f'<div class="card-h">{chip(p["color"])}<span class="t">{en(p["opening"])}</span></div>'

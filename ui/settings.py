@@ -14,7 +14,7 @@ from .ctx import ctx
 from .data import data_stamp, get_data, job_state, start_analysis
 
 def _reset_drill():
-    st.session_state.update(mk_drill=False, quiz=False)
+    st.session_state.update(mk_drill=False, quiz=False, rp_drill=None)
 
 
 def _set_threshold():

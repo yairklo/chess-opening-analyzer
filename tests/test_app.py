@@ -226,3 +226,55 @@ def test_sensitivity_radio_shows_the_real_value_after_navigation():
     at = run("plan3", "home", thr=8)
     at = next(b for b in at.button if b.key == "fix_0").click().run()
     assert at.radio(key="thr_choice").value == at.session_state["thr"] == 8
+
+
+def test_opening_practice_starts_from_any_opening(monkeypatch):
+    """The openings screen offers practice for the selected opening even when it has no mistakes."""
+    import ui.trainer
+    monkeypatch.setattr(ui.trainer, "tr_node", lambda fen, color, rating: dict(
+        mpv=[("d2d3", 30), ("c2c3", 20)], wins=[55.0, 50.0], gap=5.0, critical=False, level=None, masters=None,
+        level_n=0, masters_n=0, level_err=None, known=False))
+    import chess
+    monkeypatch.setattr(ui.trainer, "tr_opp", lambda fen, rating, g: [dict(
+        uci=next(iter(chess.Board(fen).legal_moves)).uci(), san="x", tags=["test"])])
+    at = run("yairklo", "repertoire")
+    assert not at.exception, at.exception
+    btn = next(b for b in at.button if b.key and b.key.startswith("rp_practice_"))
+    at = btn.click().run()
+    assert not at.exception, at.exception
+    assert any("תרגול הפתיחה" in m.value for m in at.markdown)
+    # the line may end on either side's move; both start the trainer card
+    assert any("מסע 1: תור" in m.value or "תור היריב" in m.value for m in at.markdown)
+    assert "→ חזרה לפתיחות" in labels(at)
+
+
+def test_opening_practice_hidden_for_other_players():
+    at = run("plan3", "repertoire")
+    assert not any(b.key and b.key.startswith("rp_practice_") for b in at.button)
+
+
+def test_accepted_move_is_played_on_the_board(monkeypatch):
+    """After a good answer the board shows the position after the move, not the old position with an arrow."""
+    import chess
+    import ui.trainer
+    monkeypatch.setattr(ui.trainer, "tr_node", lambda fen, color, rating: dict(
+        mpv=[("d2d3", 30), ("c2c3", 20)], wins=[55.0, 50.0], gap=5.0, critical=False, level=None, masters=None,
+        level_n=0, masters_n=0, level_err=None, known=False))
+    seen = []
+
+    def fake_board(board, color, **kw):
+        seen.append((board.fen(), kw.get("arrows"), kw.get("last")))
+        return None
+
+    monkeypatch.setattr(ui.trainer, "chess_board", fake_board)
+    at = run("yairklo", "mistakes", mk_drill=True)
+    assert not at.exception, at.exception
+    before_fen = seen[-1][0]
+    move = next(iter(chess.Board(before_fen).legal_moves)).uci()
+    at.session_state["tr_answer"] = dict(uci=move, best=move, ok=True, is_best=True, drop=0.0, win=50.0)
+    at.run()
+    after_fen, arrows, last = seen[-1]
+    expected = chess.Board(before_fen)
+    expected.push_uci(move)
+    assert after_fen == expected.fen()
+    assert not arrows and last.uci() == move

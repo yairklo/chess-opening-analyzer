@@ -114,6 +114,18 @@ def last_plies(group, n=2):
     return " ".join(move_label(i, m) if i % 2 or i == k + 1 else m for i, m in enumerate(toks[k:], k + 1))
 
 
+def practice_position(op):
+    """A trainer position for an opening node: the board after the node's line, no mistake attached."""
+    import chess
+    moves = op.group.split()
+    b = chess.Board()
+    for san in moves:
+        b.push_san(san)
+    return dict(key=op.key, fen=b.fen(), color=op.color, played="תרגול", played_uci=None, best_uci=None, best_san="",
+                ply=len(moves) + 1, pre_moves=moves, opening=op.opening, replies=[], mistakes=0, reached=0, count=0,
+                games=[], status="few")
+
+
 def node_games(op):
     """All filtered games that start with the node's moves (the node row sums its whole subtree)."""
     pre = op.group.split()
