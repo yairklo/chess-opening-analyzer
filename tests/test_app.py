@@ -278,3 +278,14 @@ def test_accepted_move_is_played_on_the_board(monkeypatch):
     expected.push_uci(move)
     assert after_fen == expected.fen()
     assert not arrows and last.uci() == move
+
+
+def test_castling_is_offered_once():
+    """The Explorer writes castling as e1h1 and the engine as e1g1: one option, not two."""
+    import chess
+    from chessapp.trainer import my_options, opponent_options
+    b = chess.Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4")
+    info = dict(mpv=[("e1g1", 30), ("d2d3", 20)], level={"moves": [
+        dict(uci="e1h1", white=10, draws=1, black=5), dict(uci="d2d3", white=3, draws=0, black=2)]})
+    opts = my_options(b, info, None, k=8)
+    assert opts.count("e1g1") == 1 and "e1h1" not in opts

@@ -43,6 +43,15 @@ def top_moves(board: chess.Board, n: int = 3):
     return out
 
 
+def canonical(board: chess.Board, uci):
+    """The move in the board's own notation, or None when it is illegal. The Explorer writes castling as the king
+    taking its own rook (e1h1); the engine writes e1g1: both are the same move and must not be offered twice."""
+    try:
+        return board.parse_uci(uci).uci() if uci else None
+    except ValueError:
+        return None
+
+
 def pov(cp, color):
     return cp if color == "white" else -cp
 
@@ -97,6 +106,7 @@ def my_options(board: chess.Board, info: dict, mistake_uci: str = None, k: int =
     out = []
 
     def add(u):
+        u = canonical(board, u)
         if u and u not in out and chess.Move.from_uci(u) in board.legal_moves:
             out.append(u)
 
@@ -120,9 +130,10 @@ def opponent_options(board: chess.Board, rating: int, from_games=None, k: int = 
     opts = {}
 
     def add(uci, tag, order):
-        m = chess.Move.from_uci(uci)
-        if m not in board.legal_moves:
+        uci = canonical(board, uci)
+        if not uci or chess.Move.from_uci(uci) not in board.legal_moves:
             return
+        m = chess.Move.from_uci(uci)
         o = opts.setdefault(uci, {"uci": uci, "san": board.san(m), "tags": [], "order": order})
         o["order"] = min(o["order"], order)
         if tag not in o["tags"]:
