@@ -289,3 +289,13 @@ def test_castling_is_offered_once():
         dict(uci="e1h1", white=10, draws=1, black=5), dict(uci="d2d3", white=3, draws=0, black=2)]})
     opts = my_options(b, info, None, k=8)
     assert opts.count("e1g1") == 1 and "e1h1" not in opts
+
+
+def test_king_dropped_on_its_rook_is_castling():
+    import chess
+    import streamlit as st
+    from ui.board import fresh_move, legal_map
+    b = chess.Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4")
+    assert "h1" in legal_map(b)["e1"] and "g1" in legal_map(b)["e1"]
+    st.session_state.clear()
+    assert fresh_move({"uci": "e1h1", "token": "c1"}, "tok", b) == "e1g1"

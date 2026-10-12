@@ -29,10 +29,16 @@ def legal_map(board, allow=None):
     for m in board.legal_moves:
         if allow is not None and m.uci() not in allow:
             continue
-        out.setdefault(chess.square_name(m.from_square), [])
+        frm = chess.square_name(m.from_square)
+        targets = out.setdefault(frm, [])
         to = chess.square_name(m.to_square)
-        if to not in out[chess.square_name(m.from_square)]:
-            out[chess.square_name(m.from_square)].append(to)
+        if to not in targets:
+            targets.append(to)
+        if board.is_castling(m):  # the king may also be dropped on its own rook (how Lichess accepts castling)
+            rook = chess.square(7 if board.is_kingside_castling(m) else 0, chess.square_rank(m.from_square))
+            rook_name = chess.square_name(rook)
+            if rook_name not in targets:
+                targets.append(rook_name)
     return out
 
 
@@ -60,7 +66,7 @@ def fresh_move(value, state_key, board):
         return None
     st.session_state[state_key] = value.get("token")
     try:
-        move = chess.Move.from_uci(value["uci"])
+        move = board.parse_uci(value["uci"])   # king-takes-rook (e1h1) becomes the castling move e1g1
     except (KeyError, ValueError):
         return None
-    return value["uci"] if move in board.legal_moves else None
+    return move.uci() if move in board.legal_moves else None
