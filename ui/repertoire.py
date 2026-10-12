@@ -166,7 +166,7 @@ def _node_mistakes(op):
         md(f'<div class="plan-title">{esc(he_title(op.opening))}{toxic}</div>'
            f'<div class="plan-en" dir="ltr" style="text-align:right">{esc(op.opening)}</div>')
         board, last = position_at(op.group.split(), int(op.plies))
-        left, right = st.columns([1, 1.15], vertical_alignment="center")
+        left, right = st.columns([1.35, 1], vertical_alignment="center")
         left.image(board_svg(board, op.color, last, [], size=190), width=190)
         with right:
             md(f'<div class="moves" style="font-size:.85rem">{esc(tail_moves(op.group, 24))}</div>'
@@ -191,16 +191,10 @@ def _node_mistakes(op):
             return
         found = repeated
         top = found[0]
-        a, b = st.columns([1, 2], vertical_alignment="center")
-        a.image(board_svg(chess.Board(top["fen"]), top["color"], None,
-                          [(top["played_uci"], RED), (top["best_uci"], GREEN)], size=200), width=200)
-        with b:
-            md(f'<div class="plan-title" style="font-size:1rem">הטעות שחוזרת כאן</div>'
-               f'<div class="plan-line"><b class="ltr">{esc(move_label(top["ply"], top["played"]))}</b> במקום '
-               f'<b class="ltr">{esc(move_label(top["ply"], top["best_san"] or "?"))}</b> · '
-               f'{in_games(top["mistakes"], top["reached"])}</div>')
-            st.button("לפתוח את הטעות ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),),
-                      type="primary")
+        md(f'<div class="plan-line">הטעות שחוזרת כאן: <b class="ltr">{esc(move_label(top["ply"], top["played"]))}</b> במקום '
+           f'<b class="ltr">{esc(move_label(top["ply"], top["best_san"] or "?"))}</b> · '
+           f'{in_games(top["mistakes"], top["reached"])}</div>')
+        st.button("לפתוח את הטעות ←", key=f"rp_open_{op.key}", on_click=open_mistake, args=(tr_key(top),))
         for i, p in enumerate(found[1:3], 1):
             a, b, c = st.columns([3, 1.8, 1.4], vertical_alignment="center")
             a.markdown(f'<span dir="ltr">{esc(move_label(p["ply"], p["played"]))}</span> ← '
